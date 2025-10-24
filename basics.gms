@@ -89,6 +89,9 @@ Positive Variables
 
 Variable OF;
 
+*======================
+* ONLY LINES or STORAGE ANALYSIS
+*======================
 * If ONLY_LINES = 1  → forbid storage everywhere
 E.up(i)$(ONLY_LINES=1)     = 0;
 C.up(i,t)$(ONLY_LINES=1)   = 0;
