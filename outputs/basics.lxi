@@ -1,0 +1,63 @@
+B 3 C o m p i l a t i o n
+B 179 Equation Listing    SOLVE plan Using MIP From line 157
+D 182 obj
+D 187 symm
+D 196 antisym
+D 207 capPos
+D 218 capNeg
+D 229 balance
+D 240 socDyn
+D 251 socBox
+D 262 cRate
+D 273 rRate
+D 284 gBox
+D 295 LBox
+D 306 WleqG
+B 318 Column Listing      SOLVE plan Using MIP From line 157
+E 321 x
+E 363 f
+E 388 g
+E 410 L
+E 432 W
+E 451 C
+E 473 R
+E 495 h
+E 517 E
+E 568 OF
+B 576 Range Statistics    SOLVE plan Using MIP From line 157
+B 587 Model Statistics    SOLVE plan Using MIP From line 157
+B 600 Solution Report     SOLVE plan Using MIP From line 157
+F 645 obj
+F 647 symm
+F 655 antisym
+F 672 capPos
+F 701 capNeg
+F 730 balance
+F 747 socDyn
+F 764 socBox
+F 781 cRate
+F 798 rRate
+F 815 gBox
+F 832 LBox
+F 849 WleqG
+G 866 x
+G 877 f
+G 906 g
+G 923 L
+G 940 W
+G 957 C
+G 974 R
+G 991 h
+G 1008 E
+G 1018 OF
+B 1026 E x e c u t i o n
+I 1028 OF
+I 1029 x
+I 1034 f
+I 1039 g
+I 1048 L
+I 1056 W
+I 1063 C
+I 1070 R
+I 1077 h
+I 1084 E

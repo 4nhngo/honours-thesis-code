@@ -1,0 +1,1102 @@
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 12:44:21 Page 1
+SETUP
+C o m p i l a t i o n
+
+
+   2   
+      • Objective = CAPEX_lines + CAPEX_storage + VOLL
+      • Power balance: g_it - d_it + Σ_j f_jit  - W_it + L_it - C_it + R_it = 0
+      • Box constraints for gen, shedding, curtailment (W ≤ g), storage power, SOC
+      • Antisymmetric flows and line capacities: -Fmax*x_ij ≤ f_ij,t ≤ Fmax*x_ij
+  11   
+  12  *======================
+  13  * 1) SETS
+  14  *======================
+  15  Set n "nodes" / n1*n3 /;
+  16  Alias (n,i,j);
+  17  Set t "time periods" / t1*t4 /;
+  18   
+  19  Set und(i,j) "undirected candidate lines (i<j)"
+  20  / n1.n2, n1.n3, n2.n3 / ;
+  21   
+  22  Set a(i,j) "directed arcs";
+  23  a(i,j) = yes$(und(i,j) or und(j,i));
+  24   
+  25  *======================
+  26  * 2) PARAMETERS
+  27  *======================
+  28  Scalar
+  29      CL  "Line cost [$ per km]"        / 150000 /
+  30      CS  "Storage energy cost [$/MWh]" / 120    /
+  31      VOLL "Value of lost load [$/MWh]"  / 10000  /;
+  32   
+  33  Table dist(i,j) "distance [km]"
+  34           n1  n2  n3
+  35     n1     0  60  90
+  36     n2     0   0  50
+  37     n3     0   0   0 ;
+  38  dist(j,i)$(dist(i,j) and not dist(j,i)) = dist(i,j);
+  39   
+  40  Parameter Fmax(i,j) "line capacity [MW]";
+  41  Fmax(i,j) = 100$und(i,j);
+  42  Fmax(j,i)$(und(i,j)) = Fmax(i,j);
+  43   
+  44  Parameter
+  45      d(n,t)    "demand [MW]"
+  46      gmax(n,t) "dispatchable generation max [MW]" ;
+  47   
+  48  * ---- Random but structured test data ----
+  49  * Node 1 = generator-heavy
+  50  * Node 2 = load-heavy
+  51  * Node 3 = storage-prone mixed load
+  52   
+  53  d('n1','t1') = 20; d('n1','t2') = 15; d('n1','t3') = 20; d('n1','t4') = 25;
+  54  d('n2','t1') = 60; d('n2','t2') = 70; d('n2','t3') = 80; d('n2','t4') = 60;
+  55  d('n3','t1') = 40; d('n3','t2') = 30; d('n3','t3') = 20; d('n3','t4') = 50;
+  56   
+  57  gmax('n1','t1') = 120; gmax('n1','t2') = 120; gmax('n1','t3') = 120; gmax('n1','t4') = 120;
+  58  gmax('n2','t1') =  10; gmax('n2','t2') =  15; gmax('n2','t3') =  10; gmax('n2','t4') =  15;
+  59  gmax('n3','t1') =  20; gmax('n3','t2') =  20; gmax('n3','t3') =  25; gmax('n3','t4') =  25;
+  60   
+  61  *======================
+  62  * 3) VARIABLES
+  63  *======================
+  64  Binary Variable x(i,j) "line built (1=yes)";
+  65   
+  66  Positive Variables
+  67      f(i,j,t)  "flow [MW]"
+  68      g(n,t)    "generation [MW]"
+  69      L(n,t)    "load shedding [MW]"
+  70      W(n,t)    "generation rejection [MW]"
+  71      C(n,t)    "charging [MW]"
+  72      R(n,t)    "discharging [MW]"
+  73      h(n,t)    "state of charge [MWh]"
+  74      E(n)      "storage energy [MWh]" ;
+  75   
+  76  Variable OF;
+  77   
+  78  *======================
+  79  * 4) EQUATIONS
+  80  *======================
+  81  Equation
+  82      obj !! Objective = CAPEX_lines + CAPEX_storage + VOLL
+  83      symm(i,j) !! x(i,j)=x(j,i) (one physical line per corridor)
+  84      antisym(i,j,t) !! +30 MW i->j, −30 MW j->i
+  85      capPos(i,j,t) !! f ≤ Fmax·x
+  86      capNeg(i,j,t) !! −Fmax·x ≤ f
+  87      balance(n,t) !! g − d + Σ inflow − W + L − C + R = 0
+  88      socDyn(n,t) !! h(i,t) = h(i,t−1) + C − R (t=1)
+  89      socBox(n,t) !! h ≤ E
+  90      cRate(n,t) !! C ≤ E
+  91      rRate(n,t) !! R ≤ E
+  92      gBox(n,t)
+  93      LBox(n,t)
+  94      WleqG(n,t);
+  95   
+  96  *min Σ x_ij·CL·d_ij + Σ CS·E_i = min line CAPEX + storage CAPEX
+  97  obj..
+  98      OF =e=
+  99          sum((i,j)$(ord(i)<ord(j) and und(i,j)), CL*dist(i,j)*x(i,j))
+ 100        + sum(i, CS*E(i))
+ 101        + sum((i,t), VOLL*L(i,t)); !! VOLL [$ / MWh] * L [MW] = $/Δt & Δt=1h currently
+ 102   
+ 103  *symm: building i→j equals building j→i (one physical line).
+ 104  symm(i,j)$(a(i,j) and ord(i)<ord(j))..  x(i,j) =e= x(j,i);
+ 105  *antisym: flows are opposite: if +30 MW from i→j, then −30 MW from j→i.
+ 106  antisym(i,j,t)$(a(i,j) and ord(i)<ord(j))..  f(i,j,t) + f(j,i,t) =e= 0;
+ 107   
+ 108  * Line capacity
+ 109  * −Fmax·x ≤ f ≤ Fmax·x
+ 110  capPos(i,j,t)$(a(i,j))..  f(i,j,t) =l= Fmax(i,j)*x(i,j);
+ 111  capNeg(i,j,t)$(a(i,j)).. -f(i,j,t) =l= Fmax(i,j)*x(i,j);
+ 112   
+ 113  * Power balance git − dit + Σ flow_in − Wit + Lit − Cit + Rit = 0
+ 114  * @ node i, time t:
+ 115  *    g (local gen) minus d (local demand)
+ 116  *   + sum of f(j→i) (net flow into i)
+ 117  *   - W (gen rejection: throw away gen)
+ 118  *   + L (shed: we reduce load)
+ 119  *   - C (charge storage, consumes power)
+ 120  *   + R (discharge storage, supplies power)
+ 121  *    = 0.
+ 122  balance(i,t)..
+ 123      g(i,t) - d(i,t) + sum(j$a(j,i), f(j,i,t))
+ 124    - W(i,t) + L(i,t) - C(i,t) + R(i,t) =e= 0;
+ 125   
+ 126  * GENERATION REJECTION: h_it = h_i,t-1 + C_it - R_it
+ 127  socDyn(i,t)..  h(i,t) =e= h(i,t-1)$(ord(t)>1) + C(i,t) - R(i,t);
+ 128  * For t>1: today’s energy = yesterday’s energy + charge − discharge.
+ 129  * For t=1, h(i,t-1) doesn’t exist, so it’s skipped; effectively h(i,1) = C(i,1) − R(i,1)
+ 130   
+ 131  * SOC & power limits
+ 132  socBox(i,t)..  h(i,t) =l= E(i);
+ 133  cRate(i,t)..   C(i,t) =l= E(i); !! Charging capped by E(i)/Δ & Δ=1h
+ 134  rRate(i,t)..   R(i,t) =l= E(i); !!Discharging capped by E(i)/Δ & Δ=1h
+ 135   
+ 136  * Box constraints
+ 137  gBox(i,t)..    g(i,t) =l= gmax(i,t); !! 0 ≤ g ≤ gmax = Generators can’t exceed their max.
+ 138  LBox(i,t)..    L(i,t) =l= d(i,t); !! 0 ≤ L ≤ demand = Can’t shed more load than exists.
+ 139  WleqG(i,t)..   W(i,t) =l= g(i,t); !! 0 ≤ W ≤ g = Can’t reject more generation than you produce.
+ 140   
+ 141  *======================
+ 142  * 5) DOMAINING & BOUNDS
+ 143  *======================
+ 144  * For any (i,j) that is not a candidate arc, fix the build variable and flow to 0.
+ 145  x.fx(i,j)$(not a(i,j)) = 0;
+ 146  f.fx(i,j,t)$(not a(i,j)) = 0;
+ 147  * Forbid i=i
+ 148  x.fx(i,i) = 0;  f.fx(i,i,t) = 0;
+ 149  * No negative state of charge
+ 150  h.lo(i,t) = 0;
+ 151   
+ 152  *======================
+ 153  * 6) SOLVE
+ 154  *======================
+ 155  Model plan / all /;
+ 156  option optCR = 0;
+ 157  solve plan using mip minimizing OF; !! min Σ x_ij·CL·d_ij + Σ CS·E_i = min line CAPEX + storage CAPEX
+ 158   
+ 159  *======================
+ 160  * 7) REPORT
+ 161  *======================
+ 162   
+ 163  *   f(i,j,t)  "flow [MW]"
+ 164  *   g(n,t)    "generation [MW]"
+ 165  *   L(n,t)    "load shedding [MW]"
+ 166  *   W(n,t)    "generation rejection [MW]"
+ 167  *   C(n,t)    "charging [MW]"
+ 168  *   R(n,t)    "discharging [MW]"
+ 169  *   h(n,t)    "state of charge [MWh]"
+ 170  *   E(n)      "storage energy [MWh]" ;
+ 171  *
+ 172  display OF.l, x.l, f.l, g.l, L.l, W.l, C.l, R.l, h.l, E.l;
+ 173   
+
+
+COMPILATION TIME     =        0.000 SECONDS      3 MB  51.2.0 56392656 WEX-WEI
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 12:44:21 Page 2
+SETUP
+Equation Listing    SOLVE plan Using MIP From line 157
+
+
+---- obj  =E=  
+
+obj..  - 9000000*x(n1,n2) - 13500000*x(n1,n3) - 7500000*x(n2,n3) - 10000*L(n1,t1) - 10000*L(n1,t2) - 10000*L(n1,t3) - 10000*L(n1,t4) - 10000*L(n2,t1) - 10000*L(n2,t2) - 10000*L(n2,t3) - 10000*L(n2,t4) - 10000*L(n3,t1) - 10000*L(n3,t2) - 10000*L(n3,t3) - 10000*L(n3,t4) - 120*E(n1) - 120*E(n2) - 120*E(n3) + OF =E= 0 ; (LHS = 0)
+     
+
+---- symm  =E=  
+
+symm(n1,n2)..  x(n1,n2) - x(n2,n1) =E= 0 ; (LHS = 0)
+     
+symm(n1,n3)..  x(n1,n3) - x(n3,n1) =E= 0 ; (LHS = 0)
+     
+symm(n2,n3)..  x(n2,n3) - x(n3,n2) =E= 0 ; (LHS = 0)
+     
+
+---- antisym  =E=  
+
+antisym(n1,n2,t1)..  f(n1,n2,t1) + f(n2,n1,t1) =E= 0 ; (LHS = 0)
+     
+antisym(n1,n2,t2)..  f(n1,n2,t2) + f(n2,n1,t2) =E= 0 ; (LHS = 0)
+     
+antisym(n1,n2,t3)..  f(n1,n2,t3) + f(n2,n1,t3) =E= 0 ; (LHS = 0)
+     
+REMAINING 9 ENTRIES SKIPPED
+
+
+---- capPos  =L=  
+
+capPos(n1,n2,t1)..  - 100*x(n1,n2) + f(n1,n2,t1) =L= 0 ; (LHS = 0)
+     
+capPos(n1,n2,t2)..  - 100*x(n1,n2) + f(n1,n2,t2) =L= 0 ; (LHS = 0)
+     
+capPos(n1,n2,t3)..  - 100*x(n1,n2) + f(n1,n2,t3) =L= 0 ; (LHS = 0)
+     
+REMAINING 21 ENTRIES SKIPPED
+
+
+---- capNeg  =L=  
+
+capNeg(n1,n2,t1)..  - 100*x(n1,n2) - f(n1,n2,t1) =L= 0 ; (LHS = 0)
+     
+capNeg(n1,n2,t2)..  - 100*x(n1,n2) - f(n1,n2,t2) =L= 0 ; (LHS = 0)
+     
+capNeg(n1,n2,t3)..  - 100*x(n1,n2) - f(n1,n2,t3) =L= 0 ; (LHS = 0)
+     
+REMAINING 21 ENTRIES SKIPPED
+
+
+---- balance  =E=  
+
+balance(n1,t1)..  f(n2,n1,t1) + f(n3,n1,t1) + g(n1,t1) + L(n1,t1) - W(n1,t1) - C(n1,t1) + R(n1,t1) =E= 20 ; (LHS = 0, INFES = 20 ****)
+     
+balance(n1,t2)..  f(n2,n1,t2) + f(n3,n1,t2) + g(n1,t2) + L(n1,t2) - W(n1,t2) - C(n1,t2) + R(n1,t2) =E= 15 ; (LHS = 0, INFES = 15 ****)
+     
+balance(n1,t3)..  f(n2,n1,t3) + f(n3,n1,t3) + g(n1,t3) + L(n1,t3) - W(n1,t3) - C(n1,t3) + R(n1,t3) =E= 20 ; (LHS = 0, INFES = 20 ****)
+     
+REMAINING 9 ENTRIES SKIPPED
+
+
+---- socDyn  =E=  
+
+socDyn(n1,t1)..  - C(n1,t1) + R(n1,t1) + h(n1,t1) =E= 0 ; (LHS = 0)
+     
+socDyn(n1,t2)..  - C(n1,t2) + R(n1,t2) - h(n1,t1) + h(n1,t2) =E= 0 ; (LHS = 0)
+     
+socDyn(n1,t3)..  - C(n1,t3) + R(n1,t3) - h(n1,t2) + h(n1,t3) =E= 0 ; (LHS = 0)
+     
+REMAINING 9 ENTRIES SKIPPED
+
+
+---- socBox  =L=  
+
+socBox(n1,t1)..  h(n1,t1) - E(n1) =L= 0 ; (LHS = 0)
+     
+socBox(n1,t2)..  h(n1,t2) - E(n1) =L= 0 ; (LHS = 0)
+     
+socBox(n1,t3)..  h(n1,t3) - E(n1) =L= 0 ; (LHS = 0)
+     
+REMAINING 9 ENTRIES SKIPPED
+
+
+---- cRate  =L=  
+
+cRate(n1,t1)..  C(n1,t1) - E(n1) =L= 0 ; (LHS = 0)
+     
+cRate(n1,t2)..  C(n1,t2) - E(n1) =L= 0 ; (LHS = 0)
+     
+cRate(n1,t3)..  C(n1,t3) - E(n1) =L= 0 ; (LHS = 0)
+     
+REMAINING 9 ENTRIES SKIPPED
+
+
+---- rRate  =L=  
+
+rRate(n1,t1)..  R(n1,t1) - E(n1) =L= 0 ; (LHS = 0)
+     
+rRate(n1,t2)..  R(n1,t2) - E(n1) =L= 0 ; (LHS = 0)
+     
+rRate(n1,t3)..  R(n1,t3) - E(n1) =L= 0 ; (LHS = 0)
+     
+REMAINING 9 ENTRIES SKIPPED
+
+
+---- gBox  =L=  
+
+gBox(n1,t1)..  g(n1,t1) =L= 120 ; (LHS = 0)
+     
+gBox(n1,t2)..  g(n1,t2) =L= 120 ; (LHS = 0)
+     
+gBox(n1,t3)..  g(n1,t3) =L= 120 ; (LHS = 0)
+     
+REMAINING 9 ENTRIES SKIPPED
+
+
+---- LBox  =L=  
+
+LBox(n1,t1)..  L(n1,t1) =L= 20 ; (LHS = 0)
+     
+LBox(n1,t2)..  L(n1,t2) =L= 15 ; (LHS = 0)
+     
+LBox(n1,t3)..  L(n1,t3) =L= 20 ; (LHS = 0)
+     
+REMAINING 9 ENTRIES SKIPPED
+
+
+---- WleqG  =L=  
+
+WleqG(n1,t1)..  - g(n1,t1) + W(n1,t1) =L= 0 ; (LHS = 0)
+     
+WleqG(n1,t2)..  - g(n1,t2) + W(n1,t2) =L= 0 ; (LHS = 0)
+     
+WleqG(n1,t3)..  - g(n1,t3) + W(n1,t3) =L= 0 ; (LHS = 0)
+     
+REMAINING 9 ENTRIES SKIPPED
+
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 12:44:21 Page 3
+SETUP
+Column Listing      SOLVE plan Using MIP From line 157
+
+
+---- x  line built (1=yes)
+
+x(n1,n2)
+                (.LO, .L, .UP, .M = 0, 0, 1, 0)
+  -9.000000E+6  obj
+        1       symm(n1,n2)
+     -100       capPos(n1,n2,t1)
+     -100       capPos(n1,n2,t2)
+     -100       capPos(n1,n2,t3)
+     -100       capPos(n1,n2,t4)
+     -100       capNeg(n1,n2,t1)
+     -100       capNeg(n1,n2,t2)
+     -100       capNeg(n1,n2,t3)
+     -100       capNeg(n1,n2,t4)
+
+x(n1,n3)
+                (.LO, .L, .UP, .M = 0, 0, 1, 0)
+  -1.350000E+7  obj
+        1       symm(n1,n3)
+     -100       capPos(n1,n3,t1)
+     -100       capPos(n1,n3,t2)
+     -100       capPos(n1,n3,t3)
+     -100       capPos(n1,n3,t4)
+     -100       capNeg(n1,n3,t1)
+     -100       capNeg(n1,n3,t2)
+     -100       capNeg(n1,n3,t3)
+     -100       capNeg(n1,n3,t4)
+
+x(n2,n1)
+                (.LO, .L, .UP, .M = 0, 0, 1, 0)
+       -1       symm(n1,n2)
+     -100       capPos(n2,n1,t1)
+     -100       capPos(n2,n1,t2)
+     -100       capPos(n2,n1,t3)
+     -100       capPos(n2,n1,t4)
+     -100       capNeg(n2,n1,t1)
+     -100       capNeg(n2,n1,t2)
+     -100       capNeg(n2,n1,t3)
+     -100       capNeg(n2,n1,t4)
+
+REMAINING 3 ENTRIES SKIPPED
+
+---- f  flow [MW]
+
+f(n1,n2,t1)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       antisym(n1,n2,t1)
+        1       capPos(n1,n2,t1)
+       -1       capNeg(n1,n2,t1)
+        1       balance(n2,t1)
+
+f(n1,n2,t2)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       antisym(n1,n2,t2)
+        1       capPos(n1,n2,t2)
+       -1       capNeg(n1,n2,t2)
+        1       balance(n2,t2)
+
+f(n1,n2,t3)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       antisym(n1,n2,t3)
+        1       capPos(n1,n2,t3)
+       -1       capNeg(n1,n2,t3)
+        1       balance(n2,t3)
+
+REMAINING 21 ENTRIES SKIPPED
+
+---- g  generation [MW]
+
+g(n1,t1)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       balance(n1,t1)
+        1       gBox(n1,t1)
+       -1       WleqG(n1,t1)
+
+g(n1,t2)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       balance(n1,t2)
+        1       gBox(n1,t2)
+       -1       WleqG(n1,t2)
+
+g(n1,t3)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       balance(n1,t3)
+        1       gBox(n1,t3)
+       -1       WleqG(n1,t3)
+
+REMAINING 9 ENTRIES SKIPPED
+
+---- L  load shedding [MW]
+
+L(n1,t1)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+   -10000       obj
+        1       balance(n1,t1)
+        1       LBox(n1,t1)
+
+L(n1,t2)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+   -10000       obj
+        1       balance(n1,t2)
+        1       LBox(n1,t2)
+
+L(n1,t3)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+   -10000       obj
+        1       balance(n1,t3)
+        1       LBox(n1,t3)
+
+REMAINING 9 ENTRIES SKIPPED
+
+---- W  generation rejection [MW]
+
+W(n1,t1)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+       -1       balance(n1,t1)
+        1       WleqG(n1,t1)
+
+W(n1,t2)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+       -1       balance(n1,t2)
+        1       WleqG(n1,t2)
+
+W(n1,t3)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+       -1       balance(n1,t3)
+        1       WleqG(n1,t3)
+
+REMAINING 9 ENTRIES SKIPPED
+
+---- C  charging [MW]
+
+C(n1,t1)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+       -1       balance(n1,t1)
+       -1       socDyn(n1,t1)
+        1       cRate(n1,t1)
+
+C(n1,t2)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+       -1       balance(n1,t2)
+       -1       socDyn(n1,t2)
+        1       cRate(n1,t2)
+
+C(n1,t3)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+       -1       balance(n1,t3)
+       -1       socDyn(n1,t3)
+        1       cRate(n1,t3)
+
+REMAINING 9 ENTRIES SKIPPED
+
+---- R  discharging [MW]
+
+R(n1,t1)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       balance(n1,t1)
+        1       socDyn(n1,t1)
+        1       rRate(n1,t1)
+
+R(n1,t2)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       balance(n1,t2)
+        1       socDyn(n1,t2)
+        1       rRate(n1,t2)
+
+R(n1,t3)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       balance(n1,t3)
+        1       socDyn(n1,t3)
+        1       rRate(n1,t3)
+
+REMAINING 9 ENTRIES SKIPPED
+
+---- h  state of charge [MWh]
+
+h(n1,t1)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       socDyn(n1,t1)
+       -1       socDyn(n1,t2)
+        1       socBox(n1,t1)
+
+h(n1,t2)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       socDyn(n1,t2)
+       -1       socDyn(n1,t3)
+        1       socBox(n1,t2)
+
+h(n1,t3)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       socDyn(n1,t3)
+       -1       socDyn(n1,t4)
+        1       socBox(n1,t3)
+
+REMAINING 9 ENTRIES SKIPPED
+
+---- E  storage energy [MWh]
+
+E(n1)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+     -120       obj
+       -1       socBox(n1,t1)
+       -1       socBox(n1,t2)
+       -1       socBox(n1,t3)
+       -1       socBox(n1,t4)
+       -1       cRate(n1,t1)
+       -1       cRate(n1,t2)
+       -1       cRate(n1,t3)
+       -1       cRate(n1,t4)
+       -1       rRate(n1,t1)
+       -1       rRate(n1,t2)
+       -1       rRate(n1,t3)
+       -1       rRate(n1,t4)
+
+E(n2)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+     -120       obj
+       -1       socBox(n2,t1)
+       -1       socBox(n2,t2)
+       -1       socBox(n2,t3)
+       -1       socBox(n2,t4)
+       -1       cRate(n2,t1)
+       -1       cRate(n2,t2)
+       -1       cRate(n2,t3)
+       -1       cRate(n2,t4)
+       -1       rRate(n2,t1)
+       -1       rRate(n2,t2)
+       -1       rRate(n2,t3)
+       -1       rRate(n2,t4)
+
+E(n3)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+     -120       obj
+       -1       socBox(n3,t1)
+       -1       socBox(n3,t2)
+       -1       socBox(n3,t3)
+       -1       socBox(n3,t4)
+       -1       cRate(n3,t1)
+       -1       cRate(n3,t2)
+       -1       cRate(n3,t3)
+       -1       cRate(n3,t4)
+       -1       rRate(n3,t1)
+       -1       rRate(n3,t2)
+       -1       rRate(n3,t3)
+       -1       rRate(n3,t4)
+
+
+---- OF  
+
+OF
+                (.LO, .L, .UP, .M = -INF, 0, +INF, 0)
+        1       obj
+
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 12:44:21 Page 4
+SETUP
+Range Statistics    SOLVE plan Using MIP From line 157
+
+
+RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
+
+RHS       [min, max] : [ 1.000E+01, 1.200E+02] - Zero values observed as well
+Bound     [min, max] : [ 1.000E+00, 1.000E+00] - Zero values observed as well
+Matrix    [min, max] : [ 1.000E+00, 1.350E+07]
+
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 12:44:21 Page 5
+SETUP
+Model Statistics    SOLVE plan Using MIP From line 157
+
+
+MODEL STATISTICS
+
+BLOCKS OF EQUATIONS          13     SINGLE EQUATIONS          160
+BLOCKS OF VARIABLES          10     SINGLE VARIABLES          106
+NON ZERO ELEMENTS           394     DISCRETE VARIABLES          6
+
+
+GENERATION TIME      =        0.016 SECONDS      4 MB  51.2.0 56392656 WEX-WEI
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 12:44:21 Page 6
+SETUP
+Solution Report     SOLVE plan Using MIP From line 157
+
+
+               S O L V E      S U M M A R Y
+
+     MODEL   plan                OBJECTIVE  OF
+     TYPE    MIP                 DIRECTION  MINIMIZE
+     SOLVER  CPLEX               FROM LINE  157
+
+**** SOLVER STATUS     1 Normal Completion
+**** MODEL STATUS      1 Optimal
+**** OBJECTIVE VALUE          2700600.0000
+
+ RESOURCE USAGE, LIMIT          0.000 10000000000.000
+ ITERATION COUNT, LIMIT         0    2147483647
+*** This solver runs with a demo license. No commercial use.
+--- GMO setup time: 0.00s
+--- GMO memory 0.53 Mb (peak 0.53 Mb)
+--- Dictionary memory 0.00 Mb
+--- Cplex 22.1.2.0 link memory 0.00 Mb (peak 0.02 Mb)
+--- Starting Cplex
+
+
+--- MIP status (101): integer optimal solution.
+--- Cplex Time: 0.00sec (det. 2.27 ticks)
+
+--- Returning a primal only solution to GAMS (marginals all set to NA).
+--- Fixing integer variables and solving final LP...
+
+
+--- Fixed MIP status (1): optimal.
+--- Cplex Time: 0.00sec (det. 0.25 ticks)
+
+
+Proven optimal solution
+MIP Solution:      2700600.000000    (0 iterations, 0 nodes)
+Final Solve:       2700600.000000    (18 iterations)
+
+Best possible:     2700600.000000
+Absolute gap:            0.000000
+Relative gap:            0.000000
+
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- EQU obj                 .              .              .             1.0000      
+
+---- EQU symm  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.n2          .              .              .              .          
+n1.n3          .              .              .              .          
+n2.n3          .              .              .              .          
+
+---- EQU antisym  
+
+                LOWER          LEVEL          UPPER         MARGINAL
+
+n1.n2.t1          .              .              .              .          
+n1.n2.t2          .              .              .              .          
+n1.n2.t3          .              .              .              .          
+n1.n2.t4          .              .              .              .          
+n1.n3.t1          .              .              .              .          
+n1.n3.t2          .              .              .              .          
+n1.n3.t3          .              .              .              .          
+n1.n3.t4          .              .              .              .          
+n2.n3.t1          .              .              .              .          
+n2.n3.t2          .              .              .              .          
+n2.n3.t3          .              .              .              .          
+n2.n3.t4          .              .              .              .          
+
+---- EQU capPos  
+
+                LOWER          LEVEL          UPPER         MARGINAL
+
+n1.n2.t1        -INF             .              .        -10000.0000      
+n1.n2.t2        -INF             .              .        -10000.0000      
+n1.n2.t3        -INF             .              .        -10000.0000      
+n1.n2.t4        -INF             .              .        -10000.0000      
+n1.n3.t1        -INF             .              .        -10000.0000      
+n1.n3.t2        -INF             .              .        -10000.0000      
+n1.n3.t3        -INF             .              .         -9880.0000      
+n1.n3.t4        -INF             .              .        -10000.0000      
+n2.n1.t1        -INF             .              .              .          
+n2.n1.t2        -INF             .              .              .          
+n2.n1.t3        -INF             .              .              .          
+n2.n1.t4        -INF             .              .              .          
+n2.n3.t1        -INF             .              .        -10000.0000      
+n2.n3.t2        -INF             .              .        -10000.0000      
+n2.n3.t3        -INF             .              .         -9880.0000      
+n2.n3.t4        -INF             .              .        -10000.0000      
+n3.n1.t1        -INF             .              .              .          
+n3.n1.t2        -INF             .              .              .          
+n3.n1.t3        -INF             .              .              .          
+n3.n1.t4        -INF             .              .              .          
+n3.n2.t1        -INF             .              .        -10000.0000      
+n3.n2.t2        -INF             .              .        -10000.0000      
+n3.n2.t3        -INF             .              .        -10000.0000      
+n3.n2.t4        -INF             .              .        -10000.0000      
+
+---- EQU capNeg  
+
+                LOWER          LEVEL          UPPER         MARGINAL
+
+n1.n2.t1        -INF             .              .              .          
+n1.n2.t2        -INF             .              .              .          
+n1.n2.t3        -INF             .              .              .          
+n1.n2.t4        -INF             .              .              .          
+n1.n3.t1        -INF             .              .              .          
+n1.n3.t2        -INF             .              .              .          
+n1.n3.t3        -INF             .              .              .          
+n1.n3.t4        -INF             .              .              .          
+n2.n1.t1        -INF             .              .              .          
+n2.n1.t2        -INF             .              .              .          
+n2.n1.t3        -INF             .              .              .          
+n2.n1.t4        -INF             .              .              .          
+n2.n3.t1        -INF             .              .              .          
+n2.n3.t2        -INF             .              .              .          
+n2.n3.t3        -INF             .              .              .          
+n2.n3.t4        -INF             .              .              .          
+n3.n1.t1        -INF             .              .              .          
+n3.n1.t2        -INF             .              .              .          
+n3.n1.t3        -INF             .              .              .          
+n3.n1.t4        -INF             .              .              .          
+n3.n2.t1        -INF             .              .              .          
+n3.n2.t2        -INF             .              .              .          
+n3.n2.t3        -INF             .              .              .          
+n3.n2.t4        -INF             .              .              .          
+
+---- EQU balance  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1        20.0000        20.0000        20.0000         EPS         
+n1.t2        15.0000        15.0000        15.0000         EPS         
+n1.t3        20.0000        20.0000        20.0000         EPS         
+n1.t4        25.0000        25.0000        25.0000         EPS         
+n2.t1        60.0000        60.0000        60.0000     10000.0000      
+n2.t2        70.0000        70.0000        70.0000     10000.0000      
+n2.t3        80.0000        80.0000        80.0000     10000.0000      
+n2.t4        60.0000        60.0000        60.0000     10000.0000      
+n3.t1        40.0000        40.0000        40.0000     10000.0000      
+n3.t2        30.0000        30.0000        30.0000     10000.0000      
+n3.t3        20.0000        20.0000        20.0000      9880.0000      
+n3.t4        50.0000        50.0000        50.0000     10000.0000      
+
+---- EQU socDyn  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1          .              .              .             EPS         
+n1.t2          .              .              .             EPS         
+n1.t3          .              .              .             EPS         
+n1.t4          .              .              .             EPS         
+n2.t1          .              .              .        -10000.0000      
+n2.t2          .              .              .        -10000.0000      
+n2.t3          .              .              .        -10000.0000      
+n2.t4          .              .              .         -9880.0000      
+n3.t1          .              .              .        -10000.0000      
+n3.t2          .              .              .        -10000.0000      
+n3.t3          .              .              .         -9880.0000      
+n3.t4          .              .              .         -9880.0000      
+
+---- EQU socBox  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1        -INF             .              .              .          
+n1.t2        -INF             .              .              .          
+n1.t3        -INF             .              .              .          
+n1.t4        -INF             .              .              .          
+n2.t1        -INF             .              .              .          
+n2.t2        -INF             .              .              .          
+n2.t3        -INF             .              .              .          
+n2.t4        -INF             .              .              .          
+n3.t1        -INF           -5.0000          .              .          
+n3.t2        -INF           -5.0000          .              .          
+n3.t3        -INF             .              .              .          
+n3.t4        -INF           -5.0000          .              .          
+
+---- EQU cRate  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1        -INF             .              .              .          
+n1.t2        -INF             .              .             EPS         
+n1.t3        -INF             .              .              .          
+n1.t4        -INF             .              .             EPS         
+n2.t1        -INF             .              .              .          
+n2.t2        -INF             .              .              .          
+n2.t3        -INF             .              .              .          
+n2.t4        -INF             .              .              .          
+n3.t1        -INF           -5.0000          .              .          
+n3.t2        -INF           -5.0000          .              .          
+n3.t3        -INF             .              .              .          
+n3.t4        -INF           -5.0000          .              .          
+
+---- EQU rRate  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1        -INF             .              .              .          
+n1.t2        -INF             .              .              .          
+n1.t3        -INF             .              .              .          
+n1.t4        -INF             .              .              .          
+n2.t1        -INF             .              .              .          
+n2.t2        -INF             .              .              .          
+n2.t3        -INF             .              .              .          
+n2.t4        -INF             .              .          -120.0000      
+n3.t1        -INF           -5.0000          .              .          
+n3.t2        -INF           -5.0000          .              .          
+n3.t3        -INF           -5.0000          .              .          
+n3.t4        -INF             .              .          -120.0000      
+
+---- EQU gBox  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1        -INF          120.0000       120.0000         EPS         
+n1.t2        -INF          120.0000       120.0000         EPS         
+n1.t3        -INF          120.0000       120.0000         EPS         
+n1.t4        -INF          120.0000       120.0000         EPS         
+n2.t1        -INF           10.0000        10.0000    -10000.0000      
+n2.t2        -INF           15.0000        15.0000    -10000.0000      
+n2.t3        -INF           10.0000        10.0000    -10000.0000      
+n2.t4        -INF           15.0000        15.0000    -10000.0000      
+n3.t1        -INF           20.0000        20.0000    -10000.0000      
+n3.t2        -INF           20.0000        20.0000    -10000.0000      
+n3.t3        -INF           25.0000        25.0000     -9880.0000      
+n3.t4        -INF           25.0000        25.0000    -10000.0000      
+
+---- EQU LBox  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1        -INF             .            20.0000          .          
+n1.t2        -INF             .            15.0000          .          
+n1.t3        -INF             .            20.0000          .          
+n1.t4        -INF             .            25.0000          .          
+n2.t1        -INF           50.0000        60.0000          .          
+n2.t2        -INF           55.0000        70.0000          .          
+n2.t3        -INF           70.0000        80.0000          .          
+n2.t4        -INF           45.0000        60.0000          .          
+n3.t1        -INF           20.0000        40.0000          .          
+n3.t2        -INF           10.0000        30.0000          .          
+n3.t3        -INF             .            20.0000          .          
+n3.t4        -INF           20.0000        50.0000          .          
+
+---- EQU WleqG  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1        -INF          -20.0000          .              .          
+n1.t2        -INF          -15.0000          .              .          
+n1.t3        -INF          -20.0000          .              .          
+n1.t4        -INF          -25.0000          .              .          
+n2.t1        -INF          -10.0000          .              .          
+n2.t2        -INF          -15.0000          .              .          
+n2.t3        -INF          -10.0000          .              .          
+n2.t4        -INF          -15.0000          .              .          
+n3.t1        -INF          -20.0000          .              .          
+n3.t2        -INF          -20.0000          .              .          
+n3.t3        -INF          -25.0000          .              .          
+n3.t4        -INF          -25.0000          .              .          
+
+---- VAR x  line built (1=yes)
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.n2          .              .             1.0000   5000000.0000      
+n1.n3          .              .             1.0000   9512000.0000      
+n2.n1          .              .             1.0000         EPS         
+n2.n3          .              .             1.0000   3512000.0000      
+n3.n1          .              .             1.0000         EPS         
+n3.n2          .              .             1.0000   -4.000000E+6      
+
+---- VAR f  flow [MW]
+
+                LOWER          LEVEL          UPPER         MARGINAL
+
+n1.n2.t1          .              .            +INF             .          
+n1.n2.t2          .              .            +INF             .          
+n1.n2.t3          .              .            +INF             .          
+n1.n2.t4          .              .            +INF             .          
+n1.n3.t1          .              .            +INF             .          
+n1.n3.t2          .              .            +INF             .          
+n1.n3.t3          .              .            +INF             .          
+n1.n3.t4          .              .            +INF             .          
+n2.n1.t1          .              .            +INF            EPS         
+n2.n1.t2          .              .            +INF            EPS         
+n2.n1.t3          .              .            +INF            EPS         
+n2.n1.t4          .              .            +INF            EPS         
+n2.n3.t1          .              .            +INF             .          
+n2.n3.t2          .              .            +INF             .          
+n2.n3.t3          .              .            +INF             .          
+n2.n3.t4          .              .            +INF             .          
+n3.n1.t1          .              .            +INF            EPS         
+n3.n1.t2          .              .            +INF            EPS         
+n3.n1.t3          .              .            +INF            EPS         
+n3.n1.t4          .              .            +INF            EPS         
+n3.n2.t1          .              .            +INF             .          
+n3.n2.t2          .              .            +INF             .          
+n3.n2.t3          .              .            +INF             .          
+n3.n2.t4          .              .            +INF             .          
+
+---- VAR g  generation [MW]
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1          .           120.0000        +INF             .          
+n1.t2          .           120.0000        +INF             .          
+n1.t3          .           120.0000        +INF             .          
+n1.t4          .           120.0000        +INF             .          
+n2.t1          .            10.0000        +INF             .          
+n2.t2          .            15.0000        +INF             .          
+n2.t3          .            10.0000        +INF             .          
+n2.t4          .            15.0000        +INF             .          
+n3.t1          .            20.0000        +INF             .          
+n3.t2          .            20.0000        +INF             .          
+n3.t3          .            25.0000        +INF             .          
+n3.t4          .            25.0000        +INF             .          
+
+---- VAR L  load shedding [MW]
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1          .              .            +INF        10000.0000      
+n1.t2          .              .            +INF        10000.0000      
+n1.t3          .              .            +INF        10000.0000      
+n1.t4          .              .            +INF        10000.0000      
+n2.t1          .            50.0000        +INF             .          
+n2.t2          .            55.0000        +INF             .          
+n2.t3          .            70.0000        +INF             .          
+n2.t4          .            45.0000        +INF             .          
+n3.t1          .            20.0000        +INF             .          
+n3.t2          .            10.0000        +INF             .          
+n3.t3          .              .            +INF          120.0000      
+n3.t4          .            20.0000        +INF             .          
+
+---- VAR W  generation rejection [MW]
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1          .           100.0000        +INF             .          
+n1.t2          .           105.0000        +INF             .          
+n1.t3          .           100.0000        +INF             .          
+n1.t4          .            95.0000        +INF             .          
+n2.t1          .              .            +INF        10000.0000      
+n2.t2          .              .            +INF        10000.0000      
+n2.t3          .              .            +INF        10000.0000      
+n2.t4          .              .            +INF        10000.0000      
+n3.t1          .              .            +INF        10000.0000      
+n3.t2          .              .            +INF        10000.0000      
+n3.t3          .              .            +INF         9880.0000      
+n3.t4          .              .            +INF        10000.0000      
+
+---- VAR C  charging [MW]
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1          .              .            +INF             .          
+n1.t2          .              .            +INF             .          
+n1.t3          .              .            +INF             .          
+n1.t4          .              .            +INF             .          
+n2.t1          .              .            +INF             .          
+n2.t2          .              .            +INF            EPS         
+n2.t3          .              .            +INF            EPS         
+n2.t4          .              .            +INF          120.0000      
+n3.t1          .              .            +INF             .          
+n3.t2          .              .            +INF            EPS         
+n3.t3          .             5.0000        +INF             .          
+n3.t4          .              .            +INF          120.0000      
+
+---- VAR R  discharging [MW]
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1          .              .            +INF            EPS         
+n1.t2          .              .            +INF            EPS         
+n1.t3          .              .            +INF            EPS         
+n1.t4          .              .            +INF            EPS         
+n2.t1          .              .            +INF            EPS         
+n2.t2          .              .            +INF            EPS         
+n2.t3          .              .            +INF             .          
+n2.t4          .              .            +INF             .          
+n3.t1          .              .            +INF            EPS         
+n3.t2          .              .            +INF             .          
+n3.t3          .              .            +INF            EPS         
+n3.t4          .             5.0000        +INF             .          
+
+---- VAR h  state of charge [MWh]
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t1          .              .            +INF            EPS         
+n1.t2          .              .            +INF             .          
+n1.t3          .              .            +INF            EPS         
+n1.t4          .              .            +INF             .          
+n2.t1          .              .            +INF            EPS         
+n2.t2          .              .            +INF             .          
+n2.t3          .              .            +INF          120.0000      
+n2.t4          .              .            +INF         9880.0000      
+n3.t1          .              .            +INF            EPS         
+n3.t2          .              .            +INF          120.0000      
+n3.t3          .             5.0000        +INF             .          
+n3.t4          .              .            +INF         9880.0000      
+
+---- VAR E  storage energy [MWh]
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+n1          .              .            +INF          120.0000      
+n2          .              .            +INF             .          
+n3          .             5.0000        +INF             .          
+
+                           LOWER          LEVEL          UPPER         MARGINAL
+
+---- VAR OF                -INF      2700600.0000        +INF             .          
+
+
+**** REPORT SUMMARY :        0     NONOPT
+                             0 INFEASIBLE
+                             0  UNBOUNDED
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 12:44:21 Page 7
+SETUP
+E x e c u t i o n
+
+
+----    172 VARIABLE OF.L                  =  2700600.000  
+
+----    172 VARIABLE x.L  line built (1=yes)
+
+                      ( ALL       0.000 )
+
+
+----    172 VARIABLE f.L  flow [MW]
+
+                      ( ALL       0.000 )
+
+
+----    172 VARIABLE g.L  generation [MW]
+
+            t1          t2          t3          t4
+
+n1     120.000     120.000     120.000     120.000
+n2      10.000      15.000      10.000      15.000
+n3      20.000      20.000      25.000      25.000
+
+
+----    172 VARIABLE L.L  load shedding [MW]
+
+            t1          t2          t3          t4
+
+n2      50.000      55.000      70.000      45.000
+n3      20.000      10.000                  20.000
+
+
+----    172 VARIABLE W.L  generation rejection [MW]
+
+            t1          t2          t3          t4
+
+n1     100.000     105.000     100.000      95.000
+
+
+----    172 VARIABLE C.L  charging [MW]
+
+            t3
+
+n3       5.000
+
+
+----    172 VARIABLE R.L  discharging [MW]
+
+            t4
+
+n3       5.000
+
+
+----    172 VARIABLE h.L  state of charge [MWh]
+
+            t3
+
+n3       5.000
+
+
+----    172 VARIABLE E.L  storage energy [MWh]
+
+n3 5.000
+
+
+
+EXECUTION TIME       =        0.063 SECONDS      4 MB  51.2.0 56392656 WEX-WEI
+
+
+USER: GAMS Demo, for EULA and demo limitations see   G250826+0003Cc-GEN
+      https://www.gams.com/latest/docs/UG%5FLicense.html         DC0000
+
+
+**** FILE SUMMARY
+
+Input      C:\Users\vanqu\OneDrive\Desktop\Thesis\honours-thesis\basics.gms
+Output     C:\Users\vanqu\OneDrive\Desktop\Thesis\honours-thesis\outputs\basics.lst
