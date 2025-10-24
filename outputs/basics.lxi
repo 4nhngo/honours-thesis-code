@@ -1,67 +1,69 @@
 B 3 C o m p i l a t i o n
-B 208 Equation Listing    SOLVE plan Using MIP From line 170
-D 211 obj
-D 216 symm
-D 225 antisym
-D 236 capPos
-D 247 capNeg
-D 258 balance
-D 269 socDyn
-D 280 socBox
-D 291 cRate
-D 302 rRate
-D 313 gBox
-D 324 LBox
-D 335 WleqG
-B 347 Column Listing      SOLVE plan Using MIP From line 170
-E 350 x
-E 392 f
-E 417 g
-E 442 L
-E 464 W
-E 486 C
-E 508 R
-E 530 h
-E 552 E
-E 603 OF
-B 611 Range Statistics    SOLVE plan Using MIP From line 170
-B 622 Model Statistics    SOLVE plan Using MIP From line 170
-B 635 Solution Report     SOLVE plan Using MIP From line 170
-F 680 obj
-F 682 symm
-F 690 antisym
-F 707 capPos
-F 736 capNeg
-F 765 balance
-F 782 socDyn
-F 799 socBox
-F 816 cRate
-F 833 rRate
-F 850 gBox
-F 867 LBox
-F 884 WleqG
-G 901 x
-G 912 f
-G 941 g
-G 958 L
-G 975 W
-G 992 C
-G 1009 R
-G 1026 h
-G 1043 E
-G 1053 OF
-B 1061 E x e c u t i o n
-I 1061 inflow
-I 1071 outflow
-I 1080 netflow
-I 1090 balanceResidual
-I 1095 OF
-I 1096 x
-I 1105 f
-I 1115 g
-I 1123 L
-I 1128 W
-I 1133 C
-I 1138 R
-I 1143 h
-I 1148 E
+B 226 Equation Listing    SOLVE plan Using MIP From line 188
+D 229 obj
+D 234 symm
+D 243 antisym
+D 254 capPos
+D 265 capNeg
+D 276 balance
+D 287 socDyn1
+D 296 socDynT
+D 307 socBox
+D 318 cRate
+D 329 rRate
+D 340 gBox
+D 351 LBox
+D 362 WleqG
+B 374 Column Listing      SOLVE plan Using MIP From line 188
+E 377 x
+E 413 f
+E 438 g
+E 463 L
+E 485 W
+E 507 C
+E 529 R
+E 551 h
+E 572 E
+E 614 OF
+B 622 Range Statistics    SOLVE plan Using MIP From line 188
+B 633 Model Statistics    SOLVE plan Using MIP From line 188
+B 646 Solution Report     SOLVE plan Using MIP From line 188
+F 691 obj
+F 693 symm
+F 701 antisym
+F 715 capPos
+F 738 capNeg
+F 761 balance
+F 775 socDyn1
+F 783 socDynT
+F 794 socBox
+F 808 cRate
+F 822 rRate
+F 836 gBox
+F 850 LBox
+F 864 WleqG
+G 878 x
+G 889 f
+G 912 g
+G 926 L
+G 940 W
+G 954 C
+G 968 R
+G 982 h
+G 996 E
+G 1006 OF
+B 1014 E x e c u t i o n
+I 1016 inflow
+I 1021 outflow
+I 1026 netflow
+I 1031 balanceResidual
+I 1036 OF
+I 1037 x
+I 1042 f
+I 1047 g
+I 1056 L
+I 1064 W
+I 1069 C
+I 1074 R
+I 1079 h
+I 1084 E

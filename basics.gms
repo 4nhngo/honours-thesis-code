@@ -14,7 +14,7 @@ $onInline
 *======================
 Set n "nodes" / n1*n3 /;
 Alias (n,i,j);
-Set t "time periods" / t1*t4 /;
+Set t "time periods" / t1*t3 /;
 
 Set und(i,j) "undirected candidate lines (i<j)"
 / n1.n2, n1.n3, n2.n3 / ;
@@ -49,18 +49,25 @@ Parameter
 Parameter cg(n) "gen marginal cost [$/MWh]";
 cg('n1') = 20;  cg('n2') = 60;  cg('n3') = 45; !! node 1 = generator so cheap
 
-* ---- Random but structured test data ----
+* --- Scenario toggles (0 = off, 1 = on) ---
+Scalar ONLY_LINES   / 0 /
+       ONLY_STORAGE / 1 /;
+       
+
+Scalar alpha0 "initial SOC fraction of E(i)" / 0 /;
+
+* ---- Random data ----
 * Node 1 = generator-heavy
 * Node 2 = load-heavy
 * Node 3 = storage-prone mixed load
 
-d('n1','t1') = 20; d('n1','t2') = 15; d('n1','t3') = 20; d('n1','t4') = 25;
-d('n2','t1') = 60; d('n2','t2') = 70; d('n2','t3') = 80; d('n2','t4') = 60;
-d('n3','t1') = 40; d('n3','t2') = 30; d('n3','t3') = 20; d('n3','t4') = 50;
+d('n1','t1') = 20; d('n1','t2') = 15; d('n1','t3') = 20; 
+d('n2','t1') = 60; d('n2','t2') = 70; d('n2','t3') = 80; 
+d('n3','t1') = 40; d('n3','t2') = 30; d('n3','t3') = 20; 
 
-gmax('n1','t1') = 120; gmax('n1','t2') = 120; gmax('n1','t3') = 120; gmax('n1','t4') = 120;
-gmax('n2','t1') =  10; gmax('n2','t2') =  15; gmax('n2','t3') =  10; gmax('n2','t4') =  15;
-gmax('n3','t1') =  20; gmax('n3','t2') =  20; gmax('n3','t3') =  25; gmax('n3','t4') =  25;
+gmax('n1','t1') = 120; gmax('n1','t2') = 120; gmax('n1','t3') = 120; 
+gmax('n2','t1') =  10; gmax('n2','t2') =  15; gmax('n2','t3') =  10; 
+gmax('n3','t1') =  20; gmax('n3','t2') =  20; gmax('n3','t3') =  25; 
 
 *======================
 * 3) VARIABLES
@@ -82,6 +89,16 @@ Positive Variables
 
 Variable OF;
 
+* If ONLY_LINES = 1  → forbid storage everywhere
+E.up(i)$(ONLY_LINES=1)     = 0;
+C.up(i,t)$(ONLY_LINES=1)   = 0;
+R.up(i,t)$(ONLY_LINES=1)   = 0;
+h.up(i,t)$(ONLY_LINES=1)   = 0;
+
+* If ONLY_STORAGE = 1 → no lines and no flows
+x.fx(i,j)$(ONLY_STORAGE=1 and a(i,j)) = 0;
+f.fx(i,j,t)$(ONLY_STORAGE=1 and a(i,j)) = 0;
+
 *======================
 * 4) EQUATIONS
 *======================
@@ -92,7 +109,8 @@ Equation
     capPos(i,j,t) !! f ≤ Fmax·x
     capNeg(i,j,t) !! −Fmax·x ≤ f 
     balance(n,t) !! g − d + Σ inflow − W + L − C + R = 0
-    socDyn(n,t) !! h(i,t) = h(i,t−1) + C − R (t=1)
+    socDyn1(n)    !! t=1 : h(i,1) = alpha0*E(i) + C(i,1) - R(i,1)
+    socDynT(n,t)  !! t>1 : h(i,t) = h(i,t-1) + C(i,t) - R(i,t) 
     socBox(n,t) !! h ≤ E
     cRate(n,t) !! C ≤ E
     rRate(n,t) !! R ≤ E
@@ -137,9 +155,9 @@ balance(i,t)..
   - W(i,t) + L(i,t) - C(i,t) + R(i,t) =e= 0;
 
 * GENERATION REJECTION: h_it = h_i,t-1 + C_it - R_it
-socDyn(i,t)..  h(i,t) =e= h(i,t-1)$(ord(t)>1) + C(i,t) - R(i,t);
-* For t>1: today’s energy = yesterday’s energy + charge − discharge.
-* For t=1, h(i,t-1) doesn’t exist, so it’s skipped; effectively h(i,1) = C(i,1) − R(i,1)
+* Initial & dynamic SOC
+socDyn1(i)..              h(i,'t1') =e= alpha0*E(i) + C(i,'t1') - R(i,'t1');
+socDynT(i,t)$(ord(t)>1).. h(i,t)    =e= h(i,t-1)    + C(i,t)     - R(i,t);
 
 * SOC & power limits
 socBox(i,t)..  h(i,t) =l= E(i);
