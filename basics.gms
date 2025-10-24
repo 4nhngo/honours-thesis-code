@@ -1,7 +1,10 @@
 $title SETUP
 
 $onText
-Model the setup!
+• Objective = CAPEX_lines + CAPEX_storage + VOLL
+• Power balance: g_it - d_it + Σ_j f_jit  - W_it + L_it - C_it + R_it = 0
+• Box constraints for gen, shedding, curtailment (W ≤ g), storage power, SOC
+• Antisymmetric flows and line capacities: -Fmax*x_ij ≤ f_ij,t ≤ Fmax*x_ij
 $offText
 $onEolCom
 $onInline
@@ -17,15 +20,15 @@ Set und(i,j) "undirected candidate lines (i<j)"
 / n1.n2, n1.n3, n2.n3 / ;
 
 Set a(i,j) "directed arcs";
-a(i,j) = yes$und(i,j);
-a(j,i) = yes$und(i,j);
+a(i,j) = yes$(und(i,j) or und(j,i));
 
 *======================
 * 2) PARAMETERS
 *======================
 Scalar
     CL  "Line cost [$ per km]"        / 150000 /
-    CS  "Storage energy cost [$/MWh]" / 120    / ;
+    CS  "Storage energy cost [$/MWh]" / 120    /
+    VOLL "Value of lost load [$/MWh]"  / 10000  /;
 
 Table dist(i,j) "distance [km]"
          n1  n2  n3
@@ -94,7 +97,8 @@ Equation
 obj..
     OF =e=
         sum((i,j)$(ord(i)<ord(j) and und(i,j)), CL*dist(i,j)*x(i,j))
-      + sum(i, CS*E(i));
+      + sum(i, CS*E(i))
+      + sum((i,t), VOLL*L(i,t)); !! VOLL [$ / MWh] * L [MW] = $/Δt & Δt=1h currently
       
 *symm: building i→j equals building j→i (one physical line).
 symm(i,j)$(a(i,j) and ord(i)<ord(j))..  x(i,j) =e= x(j,i);
