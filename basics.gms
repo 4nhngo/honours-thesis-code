@@ -146,6 +146,8 @@ x.fx(i,j)$(not a(i,j)) = 0;
 f.fx(i,j,t)$(not a(i,j)) = 0;
 * Forbid i=i
 x.fx(i,i) = 0;  f.fx(i,i,t) = 0;
+* No negative state of charge
+h.lo(i,t) = 0;
 
 *======================
 * 6) SOLVE
