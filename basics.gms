@@ -1,7 +1,7 @@
 $title SETUP
 
 $onText
-• Objective = CAPEX_lines + CAPEX_storage + VOLL
+• Objective = CAPEX_lines + CAPEX_storage + VOLL + Generation Rejection Penalty + Generation Cost
 • Power balance: g_it - d_it + Σ_j f_jit  - W_it + L_it - C_it + R_it = 0
 • Box constraints for gen, shedding, curtailment (W ≤ g), storage power, SOC
 • Antisymmetric flows and line capacities: -Fmax*x_ij ≤ f_ij,t ≤ Fmax*x_ij
@@ -28,7 +28,8 @@ a(i,j) = yes$(und(i,j) or und(j,i));
 Scalar
     CL  "Line cost [$ per km]"        / 150000 /
     CS  "Storage energy cost [$/MWh]" / 120    /
-    VOLL "Value of lost load [$/MWh]"  / 10000  /;
+    VOLL "Value of lost load [$/MWh]"  / 100000000000000000  /
+    PCURT "penalty for generation rejection [$/MWh]" / 5000000000000 /
 
 Table dist(i,j) "distance [km]"
          n1  n2  n3
@@ -44,6 +45,9 @@ Fmax(j,i)$(und(i,j)) = Fmax(i,j);
 Parameter
     d(n,t)    "demand [MW]"
     gmax(n,t) "dispatchable generation max [MW]" ;
+    
+Parameter cg(n) "gen marginal cost [$/MWh]";
+cg('n1') = 20;  cg('n2') = 60;  cg('n3') = 45; !! node 1 = generator so cheap
 
 * ---- Random but structured test data ----
 * Node 1 = generator-heavy
@@ -63,8 +67,11 @@ gmax('n3','t1') =  20; gmax('n3','t2') =  20; gmax('n3','t3') =  25; gmax('n3','
 *======================
 Binary Variable x(i,j) "line built (1=yes)";
 
+* flows must be free (+30 MW i->j, −30 MW j->i)
+Variable
+    f(i,j,t)  "flow [MW]";
+    
 Positive Variables
-    f(i,j,t)  "flow [MW]"
     g(n,t)    "generation [MW]"
     L(n,t)    "load shedding [MW]"
     W(n,t)    "generation rejection [MW]"
@@ -93,12 +100,18 @@ Equation
     LBox(n,t)
     WleqG(n,t);
 
-*min Σ x_ij·CL·d_ij + Σ CS·E_i = min line CAPEX + storage CAPEX
+* min Σ x_ij·CL·d_ij + Σ CS·E_i
+* = min line CAPEX + storage CAPEX 
+* + VOLL [$ / MWh] * L [MW] = $/Δt & Δt=1h currently
+* + cost for generation rejection [$/MWh]
+* + penalty on generation cost (varies by node [$/MWh])
 obj..
     OF =e=
         sum((i,j)$(ord(i)<ord(j) and und(i,j)), CL*dist(i,j)*x(i,j))
       + sum(i, CS*E(i))
-      + sum((i,t), VOLL*L(i,t)); !! VOLL [$ / MWh] * L [MW] = $/Δt & Δt=1h currently
+      + sum((i,t), VOLL*L(i,t))
+      + sum((i,t), PCURT*W(i,t))
+      + sum((i,t), cg(i)*g(i,t));
       
 *symm: building i→j equals building j→i (one physical line).
 symm(i,j)$(a(i,j) and ord(i)<ord(j))..  x(i,j) =e= x(j,i);
@@ -168,8 +181,24 @@ solve plan using mip minimizing OF; !! min Σ x_ij·CL·d_ij + Σ CS·E_i = min 
 *   R(n,t)    "discharging [MW]"
 *   h(n,t)    "state of charge [MWh]"
 *   E(n)      "storage energy [MWh]" ;
-*
+
+* FLOW CHECK
+Parameter inflow(i,t) "sum of flows into i", outflow(i,t) "sum of flows out of i";
+inflow(i,t)  = sum(j$a(j,i), f.l(j,i,t));
+outflow(i,t) = sum(j$a(i,j), f.l(i,j,t));
+display inflow, outflow;
+
+Parameter netflow(i,t) "positive = net interchange";
+netflow(i,t) = inflow(i,t);
+
+Parameter balanceResidual(i,t) "should be 0";
+balanceResidual(i,t) = g.l(i,t) - d(i,t) + netflow(i,t)
+                     - W.l(i,t) + L.l(i,t) - C.l(i,t) + R.l(i,t);
+display netflow, balanceResidual;
+
 display OF.l, x.l, f.l, g.l, L.l, W.l, C.l, R.l, h.l, E.l;
+
+
 
 $offInline
 $offEolCom
