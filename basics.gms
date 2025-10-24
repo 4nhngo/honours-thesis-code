@@ -79,17 +79,17 @@ Variable OF;
 * 4) EQUATIONS
 *======================
 Equation
-    obj
-    symm(i,j)
-    antisym(i,j,t)
-    capPos(i,j,t)
-    capNeg(i,j,t)
-    balance(n,t)
-    socDyn(n,t)
-    socBox(n,t)
-    cRate(n,t)
-    rRate(n,t)
-    gBox(n,t)
+    obj !! Objective = CAPEX_lines + CAPEX_storage + VOLL
+    symm(i,j) !! x(i,j)=x(j,i) (one physical line per corridor)
+    antisym(i,j,t) !! +30 MW i->j, −30 MW j->i
+    capPos(i,j,t) !! f ≤ Fmax·x
+    capNeg(i,j,t) !! −Fmax·x ≤ f 
+    balance(n,t) !! g − d + Σ inflow − W + L − C + R = 0
+    socDyn(n,t) !! h(i,t) = h(i,t−1) + C − R (t=1)
+    socBox(n,t) !! h ≤ E
+    cRate(n,t) !! C ≤ E
+    rRate(n,t) !! R ≤ E
+    gBox(n,t) 
     LBox(n,t)
     WleqG(n,t);
 
