@@ -1,4 +1,4 @@
-GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 19:14:41 Page 1
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/25/25 14:41:37 Page 1
 SETUP
 C o m p i l a t i o n
 
@@ -7,319 +7,276 @@ C o m p i l a t i o n
       • Objective = CAPEX_lines + CAPEX_storage + VOLL + Generation Rejection Penalty + Generation Cost
       • Power balance: g_it - d_it + Σ_j f_jit  - W_it + L_it - C_it + R_it = 0
       • Box constraints for gen, shedding, curtailment (W ≤ g), storage power, SOC
-      • Antisymmetric flows and line capacities: -Fmax*x_ij ≤ f_ij,t ≤ Fmax*x_ij
+      • Antisymmetric flows and line capacities: -Fmax·x ≤ f ≤ Fmax·x
   11   
-  12  *======================
+  12  *=====================================================
   13  * 1) SETS
-  14  *======================
+  14  *=====================================================
   15  Set n "nodes" / n1*n3 /;
   16  Alias (n,i,j);
   17  Set t "time periods" / t1*t2 /;
   18   
-  19  Set und(i,j) "undirected candidate lines (i<j)"
-  20  / n1.n2, n1.n3, n2.n3 / ;
-  21   
-  22  Set a(i,j) "directed arcs";
-  23  a(i,j) = yes$(und(i,j) or und(j,i));
-  24   
-  25  *======================
-  26  * 2) PARAMETERS
-  27  *======================
-  28  Scalar
-  29      CL  "Line cost [$ per km]"        / 150000 /
-  30      CS  "Storage energy cost [$/MWh]" / 120    /
-  31      VOLL "Value of lost load [$/MWh]"  / 100000000000000000  /
-  32      PCURT "penalty for generation rejection [$/MWh]" / 500000 /
-  33   
-  34  Table dist(i,j) "distance [km]"
-  35           n1  n2  n3
-  36     n1     0  60  90
-  37     n2     0   0  50
-  38     n3     0   0   0 ;
-  39  dist(j,i)$(dist(i,j) and not dist(j,i)) = dist(i,j);
-  40   
-  41  Parameter Fmax(i,j) "line capacity [MW]";
-  42  Fmax(i,j) = 100$und(i,j);
-  43  Fmax(j,i)$(und(i,j)) = Fmax(i,j);
-  44   
-  45  Parameter
-  46      d(n,t)    "demand [MW]"
-  47      gmax(n,t) "dispatchable generation max [MW]" ;
-  48   
-  49  Parameter cg(n) "gen marginal cost [$/MWh]";
-  50  cg('n1') = 20;  cg('n2') = 60;  cg('n3') = 45; !! node 1 = generator so cheap
+  19   
+  20  Set und(i,j) "undirected candidate lines (i<j)"
+  21  / n1.n2, n1.n3, n2.n3 /;
+  22   
+  23  Set a(i,j) "directed arcs";
+  24  a(i,j) = yes$(und(i,j) or und(j,i));
+  25   
+  26  *=====================================================
+  27  * 2) PARAMETERS
+  28  *=====================================================
+  29  Scalar
+  30      CL     "Line cost [$ per km]"                / 150000 /
+  31      CS     "Storage energy cost [$/MWh]"         / 120 /
+  32      VOLL   "Value of lost load [$/MWh]"          / 1e17 /
+  33      PCURT  "Penalty for generation rejection [$/MWh]" / 500000 /;
+  34  Parameter cg(n) "gen marginal cost [$/MWh]";
+  35  cg('n1') = 20;  cg('n2') = 60;  cg('n3') = 45;
+  36   
+  37  Table dist(i,j) "distance [km]"
+  38           n1  n2  n3
+  39     n1     0  60  90
+  40     n2     0   0  50
+  41     n3     0   0   0 ;
+  42  dist(j,i)$(dist(i,j) and not dist(j,i)) = dist(i,j);
+  43   
+  44  Parameter Fmax(i,j) "line capacity [MW]";
+  45  Fmax(i,j) = 100$und(i,j);
+  46  Fmax(j,i)$(und(i,j)) = Fmax(i,j);
+  47   
+  48  Parameter
+  49      d(n,t)    "demand [MW]"
+  50      gmax(n,t) "dispatchable generation max [MW]" ;
   51   
-  52  * --- Scenario toggles (0 = off, 1 = on) ---
-  53  Scalar ONLY_LINES   / 1 /
-  54         ONLY_STORAGE / 0 /;
-  55   
+  52  * ---- Node data ----
+  53  d('n1','t1') = 20; d('n1','t2') = 15;
+  54  d('n2','t1') = 60; d('n2','t2') = 70;
+  55  d('n3','t1') = 40; d('n3','t2') = 30;
   56   
-  57  Scalar alpha0 "initial SOC fraction of E(i)" / 0 /;
-  58   
-  59  * ---- Random data ----
-  60  * Node 1 = generator-heavy
-  61  * Node 2 = load-heavy
-  62  * Node 3 = storage-prone mixed load
-  63   
-  64  d('n1','t1') = 20; d('n1','t2') = 15;
-  65  d('n2','t1') = 60; d('n2','t2') = 70;
-  66  d('n3','t1') = 40; d('n3','t2') = 30;
-  67   
-  68  gmax('n1','t1') = 120; gmax('n1','t2') = 120;
-  69  gmax('n2','t1') =  10; gmax('n2','t2') =  15;
-  70  gmax('n3','t1') =  20; gmax('n3','t2') =  20;
-  71   
-  72  *======================
-  73  * 3) VARIABLES
-  74  *======================
-  75  Binary Variable x(i,j) "line built (1=yes)";
-  76   
-  77  * flows must be free (+30 MW i->j, −30 MW j->i)
-  78  Variable
-  79      f(i,j,t)  "flow [MW]";
+  57  gmax('n1','t1') = 120; gmax('n1','t2') = 120;
+  58  gmax('n2','t1') =  10; gmax('n2','t2') =  15;
+  59  gmax('n3','t1') =  20; gmax('n3','t2') =  20;
+  60   
+  61  * ---- SOC parameters ----
+  62  Scalar alpha0 "initial SOC fraction of E(i)" / 0.1 /;
+  63  Scalar h_end_frac "final SOC fraction of E(i)" / 0 /;
+  64  *=====================================================
+  65  * 3) VARIABLES
+  66  *=====================================================
+  67  Binary Variable x(i,j) "line built (1=yes)";
+  68  Variable f(i,j,t) "flow [MW]";
+  69   
+  70  Positive Variables
+  71      g(n,t) "generation [MW]"
+  72      L(n,t) "load shedding [MW]"
+  73      W(n,t) "generation rejection [MW]"
+  74      C(n,t) "charging [MW]"
+  75      R(n,t) "discharging [MW]"
+  76      h(n,t) "state of charge [MWh]"
+  77      E(n)   "storage energy [MWh]";
+  78   
+  79  Variable OF "objective function";
   80   
-  81  Positive Variables
-  82      g(n,t)    "generation [MW]"
-  83      L(n,t)    "load shedding [MW]"
-  84      W(n,t)    "generation rejection [MW]"
-  85      C(n,t)    "charging [MW]"
-  86      R(n,t)    "discharging [MW]"
-  87      h(n,t)    "state of charge [MWh]"
-  88      E(n)      "storage energy [MWh]" ;
-  89   
-  90  Variable OF;
-  91   
-  92  *======================
-  93  * ONLY LINES or STORAGE ANALYSIS
-  94  *======================
-  95  * If ONLY_LINES = 1  → forbid storage everywhere
-  96  E.up(i)$(ONLY_LINES=1)     = 0;
-  97  C.up(i,t)$(ONLY_LINES=1)   = 0;
-  98  R.up(i,t)$(ONLY_LINES=1)   = 0;
-  99  h.up(i,t)$(ONLY_LINES=1)   = 0;
- 100   
- 101  * If ONLY_STORAGE = 1 → no lines and no flows
- 102  x.fx(i,j)$(ONLY_STORAGE=1 and a(i,j)) = 0;
- 103  f.fx(i,j,t)$(ONLY_STORAGE=1 and a(i,j)) = 0;
- 104   
- 105  *======================
- 106  * 4) EQUATIONS
- 107  *======================
- 108  Equation
- 109      obj                 !! Objective = CAPEX_lines + CAPEX_storage + VOLL + Generation Rejection Penalty + Generation Cost
- 110      symm(i,j)           !! x(i,j)=x(j,i)
- 111      antisym(i,j,t)      !! f(i,j,t) + f(j,i,t) = 0
- 112      capPos(i,j,t)       !! f ≤ Fmax·x
- 113      capNeg(i,j,t)       !! −Fmax·x ≤ f
- 114      balance(n,t)        !! nodal balance
- 115      socDyn1(n)          !! t=1: h(i,'t1') = alpha0*E(i)
- 116      socDynF(n,t)        !! t>1: h(i,t+1) = h(i,t) + C - R
- 117      socBox(n,t)         !! h ≤ E
- 118      chgEnergyCap(n,t)   !! C ≤ E - h
- 119      disEnergyCap(n,t)   !! R ≤ h
- 120      gBox(n,t)
- 121      LBox(n,t)
- 122      WleqG(n,t);
- 123   
- 124  * min Σ x_ij·CL·d_ij + Σ CS·E_i
- 125  * = min line CAPEX + storage CAPEX
- 126  * + VOLL [$ / MWh] * L [MW] = $/Δt & Δt=1h currently
- 127  * + cost for generation rejection [$/MWh]
- 128  * + penalty on generation cost (varies by node [$/MWh])
- 129  obj..
- 130      OF =e=
- 131          sum((i,j)$(ord(i)<ord(j) and und(i,j)), CL*dist(i,j)*x(i,j))
- 132        + sum(i, CS*E(i))
- 133        + sum((i,t), VOLL*L(i,t))
- 134        + sum((i,t), PCURT*W(i,t))
- 135        + sum((i,t), cg(i)*g(i,t));
- 136   
- 137  *symm: building i→j equals building j→i (one physical line).
- 138  symm(i,j)$(a(i,j) and ord(i)<ord(j))..  x(i,j) =e= x(j,i);
- 139  *antisym: flows are opposite: if +30 MW from i→j, then −30 MW from j→i.
- 140  antisym(i,j,t)$(a(i,j) and ord(i)<ord(j))..  f(i,j,t) + f(j,i,t) =e= 0;
+  81  *=====================================================
+  82  * 4) SCENARIO RESTRICTIONS
+  83  *=====================================================
+  84  * --- Scenario toggles (0 = off, 1 = on) ---
+  85  Scalar ONLY_LINES   / 0 /,
+  86         ONLY_STORAGE / 1 /;
+  87   
+  88  * Only-line analysis
+  89  E.up(i)$(ONLY_LINES=1)     = 0;
+  90  C.up(i,t)$(ONLY_LINES=1)   = 0;
+  91  R.up(i,t)$(ONLY_LINES=1)   = 0;
+  92  h.up(i,t)$(ONLY_LINES=1)   = 0;
+  93   
+  94  * Only-storage analysis
+  95  x.fx(i,j)$(ONLY_STORAGE=1 and a(i,j))   = 0;
+  96  f.fx(i,j,t)$(ONLY_STORAGE=1 and a(i,j)) = 0;
+  97   
+  98  *=====================================================
+  99  * 5) EQUATIONS
+ 100  *=====================================================
+ 101   
+ 102  *----- Objective ------------------------------------------------------------
+ 103  Equation obj;
+ 104  obj..
+ 105      OF =e=
+ 106          sum((i,j)$(ord(i)<ord(j) and und(i,j)), CL*dist(i,j)*x(i,j))
+ 107        + sum(i, CS*E(i))
+ 108        + sum((i,t), VOLL*L(i,t))
+ 109        + sum((i,t), PCURT*W(i,t))
+ 110        + sum((i,t), cg(i)*g(i,t));
+ 111   
+ 112  *----- Symmetry and antisymmetry -------------------------------------------
+ 113  Equation symm(i,j), antisym(i,j,t);
+ 114  symm(i,j)$(a(i,j) and ord(i)<ord(j)).. x(i,j) =e= x(j,i);
+ 115  antisym(i,j,t)$(a(i,j) and ord(i)<ord(j)).. f(i,j,t) + f(j,i,t) =e= 0;
+ 116   
+ 117  *----- Line capacities -----------------------------------------------------
+ 118  Equation capPos(i,j,t), capNeg(i,j,t);
+ 119  capPos(i,j,t)$(a(i,j))..  f(i,j,t) =l= Fmax(i,j)*x(i,j);
+ 120  capNeg(i,j,t)$(a(i,j)).. -f(i,j,t) =l= Fmax(i,j)*x(i,j);
+ 121   
+ 122  *----- Power balance -------------------------------------------------------
+ 123  Equation balance(i,t);
+ 124  balance(i,t)..
+ 125      g(i,t) - d(i,t) + sum(j$a(j,i), f(j,i,t))
+ 126    - W(i,t) + L(i,t) - C(i,t) + R(i,t) =e= 0;
+ 127   
+ 128  *----- SOC dynamics --------------------------------------------------------
+ 129  Positive Variable h0(i) "SOC at start of t1 [MWh]";
+ 130  Equation def_h0(i);
+ 131  def_h0(i).. h0(i) =e= alpha0*E(i);
+ 132   
+ 133  Equation socEnd1(i), socEndF(i,t), terminalEnd(i);
+ 134  socEnd1(i)..              h(i,'t1') =e= h0(i) + C(i,'t1') - R(i,'t1');
+ 135  socEndF(i,t)$(ord(t)>1).. h(i,t)    =e= h(i,t-1) + C(i,t) - R(i,t);
+ 136  h.lo(i,t) = 0; !! No negative state of charge
+ 137   
+ 138  * Terminal SOC condition (connot empty storage?)
+ 139  Equation terminalEnd(i);
+ 140  terminalEnd(i)..  sum(t$(ord(t)=card(t)), h(i,t)) =e= h_end_frac * E(i);
  141   
- 142  * Line capacity
- 143  * −Fmax·x ≤ f ≤ Fmax·x
- 144  capPos(i,j,t)$(a(i,j))..  f(i,j,t) =l= Fmax(i,j)*x(i,j);
- 145  capNeg(i,j,t)$(a(i,j)).. -f(i,j,t) =l= Fmax(i,j)*x(i,j);
- 146   
- 147  * Power balance git − dit + Σ flow_in − Wit + Lit − Cit + Rit = 0
- 148  * @ node i, time t:
- 149  *    g (local gen) - d (local demand)
- 150  *   + sum of f(j→i) (net flow into i)
- 151  *   - W (gen rejection: throw away gen)
- 152  *   + L (shed: we reduce load)
- 153  *   - C (charge storage, consumes power)
- 154  *   + R (discharge storage, supplies power)
- 155  *    = 0.
- 156  balance(i,t)..
- 157      g(i,t) - d(i,t) + sum(j$a(j,i), f(j,i,t))
- 158    - W(i,t) + L(i,t) - C(i,t) + R(i,t) =e= 0;
+ 142  *----- Storage power feasibility ------------------------------------------
+ 143  Equation disEnergyCap0(i), disEnergyCapF(i,t), chgEnergyCap0(i), chgEnergyCapF(i,t);
+ 144  disEnergyCap0(i)..              R(i,'t1') =l= alpha0*E(i);
+ 145  disEnergyCapF(i,t)$(ord(t)>1).. R(i,t)    =l= h(i,t-1);
+ 146  chgEnergyCap0(i)..              C(i,'t1') =l= E(i) - h0(i);
+ 147  chgEnergyCapF(i,t)$(ord(t)>1).. C(i,t)    =l= E(i) - h(i,t-1);
+ 148   
+ 149  *----- SOC limits ----------------------------------------------------------
+ 150  Equation socBox(i,t);
+ 151  socBox(i,t).. h(i,t) =l= E(i);
+ 152   
+ 153  *----- Operational box constraints ----------------------------------------
+ 154  Equation gBox(i,t);
+ 155  gBox(i,t)..  g(i,t) =l= gmax(i,t); !! 0 ≤ g ≤ gmax = Generators can’t exceed their max.
+ 156   
+ 157  Equation LBox(i,t);
+ 158  LBox(i,t)..  L(i,t) =l= d(i,t); !! 0 ≤ L ≤ demand = Can’t shed more load than exists.
  159   
- 160  * GENERATION REJECTION: h_it = h_i,t-1 + C_it - R_it
- 161  * h(i,t) is START-of-period SOC
- 162  socDyn1(i).. h(i,'t1') =e= alpha0*E(i);
- 163   
- 164  Equation socDynF(i,t);
- 165  socDynF(i,t)$(ord(t)<card(t))..
- 166      h(i,t+1) =e= h(i,t) + C(i,t) - R(i,t);
- 167   
- 168  * Physical feasibility per period
- 169  Equation disEnergyCap(i,t), chgEnergyCap(i,t);
- 170  disEnergyCap(i,t)..  R(i,t) =l= h(i,t); !! cannot discharge more than soc
- 171  chgEnergyCap(i,t)..  C(i,t) =l= E(i) - h(i,t); !! cannot charge more than availabe space left after e_max-soc
+ 160  Equation WleqG(i,t);
+ 161  WleqG(i,t).. W(i,t) =l= g(i,t); !! 0 ≤ W ≤ g = Can’t reject more generation than you produce
+ 162   
+ 163  *=====================================================
+ 164  * 6) DOMAINING & BOUNDS
+ 165  *=====================================================
+ 166  * For any (i,j) that is not a candidate arc, fix the build variable and flow to 0.
+ 167  x.fx(i,j)$(not a(i,j)) = 0;
+ 168  f.fx(i,j,t)$(not a(i,j)) = 0;
+ 169  * Forbid i=i
+ 170  x.fx(i,i) = 0;  f.fx(i,i,t) = 0;
+ 171   
  172   
- 173  * SOC within installed energy
- 174  socBox(i,t)..  h(i,t) =l= E(i);
- 175   
- 176  * Box constraints
- 177  gBox(i,t)..    g(i,t) =l= gmax(i,t); !! 0 ≤ g ≤ gmax = Generators can’t exceed their max.
- 178  LBox(i,t)..    L(i,t) =l= d(i,t); !! 0 ≤ L ≤ demand = Can’t shed more load than exists.
- 179  WleqG(i,t)..   W(i,t) =l= g(i,t); !! 0 ≤ W ≤ g = Can’t reject more generation than you produce.
- 180   
- 181  *======================
- 182  * 5) DOMAINING & BOUNDS
- 183  *======================
- 184  * For any (i,j) that is not a candidate arc, fix the build variable and flow to 0.
- 185  x.fx(i,j)$(not a(i,j)) = 0;
- 186  f.fx(i,j,t)$(not a(i,j)) = 0;
- 187  * Forbid i=i
- 188  x.fx(i,i) = 0;  f.fx(i,i,t) = 0;
- 189  * No negative state of charge
- 190  h.lo(i,t) = 0;
- 191   
- 192  *======================
- 193  * 6) SOLVE
- 194  *======================
- 195  Model plan / all /;
- 196  option optCR = 0;
- 197  solve plan using mip minimizing OF; !! min Σ x_ij·CL·d_ij + Σ CS·E_i = min line CAPEX + storage CAPEX
- 198   
- 199  *======================
- 200  * 7) REPORT
- 201  *======================
- 202   
- 203  display '======================= LINE BUILT =======================';
- 204  Parameter built_line(i,j)  "1 if line built";
- 205  built_line(i,j)  = 0;
- 206  built_line(i,j)$und(i,j) = round(x.l(i,j));
- 207  display built_line;
- 208   
- 209  display '======================= STORAGE BUILT =======================';
- 210  Parameter built_store(i)   "1 if storage built";
- 211  built_store(i)   = 0;
- 212  built_store(i)            = round(E.l(i));
- 213  display built_store;
- 214   
- 215  display '======================= COST BREAKDOWN =======================';
- 216   
- 217  Scalar
- 218     cost_lines   "Line CAPEX"
- 219     cost_store   "Storage energy CAPEX"
- 220     cost_voll    "Shed penalty"
- 221     cost_curt    "Curtailment penalty"
- 222     cost_gen     "Generation operating cost"
- 223     cost_total   "Objective value (OF)";
- 224   
- 225  cost_lines = sum((i,j)$(ord(i)<ord(j) and und(i,j)), CL*dist(i,j)*x.l(i,j));
- 226  cost_store = sum(i, CS*E.l(i));
- 227  cost_voll  = sum((i,t), VOLL * L.l(i,t));
- 228  cost_curt  = sum((i,t), PCURT * W.l(i,t));
- 229  cost_gen   = sum((i,t), cg(i) * g.l(i,t));
- 230  cost_total = OF.l;
- 231   
- 232  display cost_lines, cost_store, cost_voll, cost_curt, cost_gen, cost_total;
- 233   
- 234  display '=================== OPERATIONS SUMMARY - NODE LEVEL ==================';
- 235  Parameter
- 236     flows(i,j,t)   "flow [MW]"
- 237     gen(i,t)       "generation [MW]"
- 238     dem(i,t)       "demand [MW]"
- 239     shed(i,t)      "load shedding [MW]"
- 240     curt(i,t)      "generation rejection [MW]"
- 241     charge(i,t)    "charging [MW]"
- 242     discharge(i,t) "discharging [MW]"
- 243     soc(i,t)       "state of charge [MWh]";
- 244   
- 245  flows(i,j,t)   = f.l(i,j,t);
- 246  gen(i,t)       = g.l(i,t);
- 247  dem(i,t)       = d(i,t);
- 248  shed(i,t)      = L.l(i,t);
- 249  curt(i,t)      = W.l(i,t);
- 250  charge(i,t)    = C.l(i,t);
- 251  discharge(i,t) = R.l(i,t);
- 252  soc(i,t)       = h.l(i,t);
- 253   
- 254  display  dem,gen, shed, curt, charge, discharge, soc;
- 255   
- 256  display '=================== OPERATIONS SUMMARY - SYSTEM LEVEL ==================';
- 257  Parameter
- 258     dem_t(t)    "system demand by time [MW]"
- 259     gen_t(t)    "system generation by time [MW]"
- 260     shed_t(t)   "system shed by time [MW]"
- 261     curt_t(t)   "system curtailment by time [MW]"
- 262     net_injection "net injection at node (g - d - W + L - C + R) [MW]";
- 263   
- 264  gen_t(t)  = sum(i, gen(i,t));
- 265  dem_t(t)  = sum(i, dem(i,t));
- 266  shed_t(t) = sum(i, shed(i,t));
- 267  curt_t(t) = sum(i, curt(i,t));
- 268   
- 269  Parameter inflow(i,t) "sum flows into i [MW]", outflow(i,t) "sum flows out of i [MW]";
- 270  inflow(i,t)  = sum(j$a(j,i), f.l(j,i,t));
- 271  outflow(i,t) = sum(j$a(i,j), f.l(i,j,t));
- 272  net_injection(i,t) = g.l(i,t) - d(i,t) - W.l(i,t) + L.l(i,t) - C.l(i,t) + R.l(i,t);
+ 173  *=====================================================
+ 174  * 7) SOLVE
+ 175  *=====================================================
+ 176  Model plan / all /;
+ 177  option optCR = 0;
+ 178  solve plan using mip minimizing OF;
+ 179   
+ 180  *=====================================================
+ 181  * 8) REPORT
+ 182  *=====================================================
+ 183  display "LINE BUILT ============================================== ";
+ 184  Parameter built_line(i,j);
+ 185  built_line(i,j)$und(i,j) = round(x.l(i,j));
+ 186  display built_line;
+ 187   
+ 188  display "STORAGE BUILT ============================================== ";
+ 189  Parameter built_store(i);
+ 190  built_store(i) = round(E.l(i));
+ 191  display built_store;
+ 192   
+ 193  *----- Cost breakdown ------------------------------------------------------
+ 194  display "COST BREAKDOWN ============================================== ";
+ 195  Scalar
+ 196     cost_lines   "Line CAPEX"
+ 197     cost_store   "Storage energy CAPEX"
+ 198     cost_voll    "Shed penalty"
+ 199     cost_curt    "Curtailment penalty"
+ 200     cost_gen     "Generation operating cost"
+ 201     cost_total   "Objective value (OF)";
+ 202  cost_lines = sum((i,j)$(ord(i)<ord(j) and und(i,j)), CL*dist(i,j)*x.l(i,j));
+ 203  cost_store = sum(i, CS*E.l(i));
+ 204  cost_voll  = sum((i,t), VOLL * L.l(i,t));
+ 205  cost_curt  = sum((i,t), PCURT * W.l(i,t));
+ 206  cost_gen   = sum((i,t), cg(i) * g.l(i,t));
+ 207  cost_total = OF.l;
+ 208  display cost_lines, cost_store, cost_voll, cost_curt, cost_gen, cost_total;
+ 209   
+ 210  *----- Node operations -----------------------------------------------------
+ 211  display "OPERATIONS SUMMARY - NODE LEVEL ===================================== ";
+ 212  Parameter
+ 213     flows(i,j,t)   "flow [MW]"
+ 214     gen(i,t)       "generation [MW]"
+ 215     dem(i,t)       "demand [MW]"
+ 216     shed(i,t)      "load shedding [MW]"
+ 217     curt(i,t)      "generation rejection [MW]"
+ 218     charge(i,t)    "charging [MW]"
+ 219     discharge(i,t) "discharging [MW]"
+ 220     soc(i)       "initial SOC[MWh]";
+ 221  flows(i,j,t)   = f.l(i,j,t);
+ 222  gen(i,t)       = g.l(i,t);
+ 223  dem(i,t)       = d(i,t);
+ 224  shed(i,t)      = L.l(i,t);
+ 225  curt(i,t)      = W.l(i,t);
+ 226  charge(i,t)    = C.l(i,t);
+ 227  discharge(i,t) = R.l(i,t);
+ 228  soc(i)       = h0.l(i);
+ 229  display dem, gen, shed, curt, charge, discharge, soc;
+ 230   
+ 231  *----- System operations ---------------------------------------------------
+ 232  display "OPERATIONS SUMMARY - SYSTEM LEVEL ===================================== ";
+ 233  Parameter
+ 234     gen_t(t)    "system generation by time [MW]"
+ 235     dem_t(t)    "system demand by time [MW]"
+ 236     shed_t(t)   "system shed by time [MW]"
+ 237     curt_t(t)   "system curtailment by time [MW]"
+ 238     inflow(i,t) "sum flows into i [MW]"
+ 239     outflow(i,t) "sum flows out of i [MW]";
+ 240  gen_t(t)  = sum(i, gen(i,t));
+ 241  dem_t(t)  = sum(i, dem(i,t));
+ 242  shed_t(t) = sum(i, shed(i,t));
+ 243  curt_t(t) = sum(i, curt(i,t));
+ 244  inflow(i,t)  = sum(j$a(j,i), f.l(j,i,t));
+ 245  outflow(i,t) = sum(j$a(i,j), f.l(i,j,t));
+ 246  display dem_t, gen_t, shed_t, curt_t, inflow, outflow;
+ 247   
+ 248  *----- Storage summary -----------------------------------------------------
+ 249  display "STORAGE ============================================== ";
+ 250  Parameter
+ 251     h_start(i)       'SOC at START of t1 [MWh] = alpha0*E'
+ 252     h_t1_end(i)      'SOC at END of t1 [MWh]'
+ 253     h_end(i)         'SOC at END of last period [MWh]'
+ 254     R_sum(i)         'sum discharge over horizon [MWh]'
+ 255     C_sum(i)         'sum charge over horizon [MWh]'
+ 256     Storage_check(i) 'h_start + ΣC - ΣR - h_end (should = 0)';
+ 257   
+ 258  h_start(i)  = h0.l(i);        !! start of horizon
+ 259  h_t1_end(i) = sum(t$(ord(t)=1), h.l(i,t)); !! end of t1
+ 260  h_end(i)    = sum(t$(ord(t)=card(t)), h.l(i,t));     !! end of last period
+ 261  R_sum(i)    = sum(t, R.l(i,t));
+ 262  C_sum(i)    = sum(t, C.l(i,t));
+ 263  Storage_check(i) = h_start(i) + C_sum(i) - R_sum(i) - h_end(i);
+ 264   
+ 265  display h_start, h_t1_end, h_end, R_sum, C_sum, Storage_check;
+ 266   
+ 267  *----- Balance check -------------------------------------------------------
+ 268  display "BALANCE CHECK ============================================== ";
+ 269  Parameter balanceResidual(i,t);
+ 270  balanceResidual(i,t) = gen(i,t) - dem(i,t) + inflow(i,t)
+ 271                       - curt(i,t) + shed(i,t) - charge(i,t) + discharge(i,t);
+ 272  display balanceResidual;
  273   
- 274  display dem_t, gen_t, shed_t, curt_t, net_injection;
- 275   
- 276  display '======================= STORAGE =======================';
- 277  Alias (t,tt);
- 278   
- 279  Parameter
- 280     h_first(i)    "SOC at first period [MWh]"
- 281     h_last(i)     "SOC at last period [MWh]"
- 282     R_sum(i)      "sum discharge over horizon [MWh]"
- 283     C_sum(i)      "sum charge over horizon [MWh]"
- 284     Storage_check(i) "h(t1) + Σ_t C - Σ_t R - h(t_last) (should = 0)";
- 285   
- 286  h_first(i) = sum(t$(ord(t)=1), h.l(i,t));
- 287  h_last(i)  = sum(t$(ord(t)=card(t)+1), h.l(i,t));
- 288  R_sum(i)   = sum(t, R.l(i,t));
- 289  C_sum(i)   = sum(t, C.l(i,t));
- 290  Storage_check(i) = h_first(i) - h_last(i) + C_sum(i) - R_sum(i);
- 291   
- 292   
- 293  display h_first, h_last, R_sum, C_sum, Storage_check;
- 294   
- 295   
- 296  display '======================= DEMAND SUPPLY DECOMPOSITION =======================';
- 297  Parameter
- 298     local_gen_used(i,t)  "g - W - C [MW]  (net local gen used at node)"
- 299     storage_supply(i,t)  "R [MW]"
- 300     demand_served(i,t)   "d - L [MW]"
- 301     contribResidual(i,t) "check: local_gen_used + storage_supply + importMW - demand_served";
- 302   
- 303  local_gen_used(i,t) = g.l(i,t) - W.l(i,t) - C.l(i,t);
- 304  storage_supply(i,t) = R.l(i,t);
- 305  demand_served(i,t)  = d(i,t) - L.l(i,t);
- 306   
- 307  display local_gen_used, storage_supply, demand_served;
- 308   
- 309  display '======================= BALANCE CHECK =======================';
- 310  Parameter balanceResidual(i,t) "KCL residual (should be 0)";
- 311  balanceResidual(i,t) = gen(i,t) - dem(i,t) + inflow(i,t)
- 312                       - curt(i,t) + shed(i,t) - charge(i,t) + discharge(i,t);
- 313  display balanceResidual;
- 314   
- 315   
- 316   
 
 
 COMPILATION TIME     =        0.000 SECONDS      3 MB  51.2.0 56392656 WEX-WEI
-GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 19:14:41 Page 2
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/25/25 14:41:37 Page 2
 SETUP
-Equation Listing    SOLVE plan Using MIP From line 197
+Equation Listing    SOLVE plan Using MIP From line 178
 
 
 ---- obj  =E=  
@@ -380,22 +337,76 @@ balance(n2,t1)..  f(n1,n2,t1) + f(n3,n2,t1) + g(n2,t1) + L(n2,t1) - W(n2,t1) - C
 REMAINING 3 ENTRIES SKIPPED
 
 
----- socDyn1  =E=  
+---- def_h0  =E=  
 
-socDyn1(n1)..  h(n1,t1) =E= 0 ; (LHS = 0)
+def_h0(n1)..  - 0.1*E(n1) + h0(n1) =E= 0 ; (LHS = 0)
      
-socDyn1(n2)..  h(n2,t1) =E= 0 ; (LHS = 0)
+def_h0(n2)..  - 0.1*E(n2) + h0(n2) =E= 0 ; (LHS = 0)
      
-socDyn1(n3)..  h(n3,t1) =E= 0 ; (LHS = 0)
+def_h0(n3)..  - 0.1*E(n3) + h0(n3) =E= 0 ; (LHS = 0)
      
 
----- socDynF  =E=  
+---- socEnd1  =E=  
 
-socDynF(n1,t1)..  - C(n1,t1) + R(n1,t1) - h(n1,t1) + h(n1,t2) =E= 0 ; (LHS = 0)
+socEnd1(n1)..  - C(n1,t1) + R(n1,t1) + h(n1,t1) - h0(n1) =E= 0 ; (LHS = 0)
      
-socDynF(n2,t1)..  - C(n2,t1) + R(n2,t1) - h(n2,t1) + h(n2,t2) =E= 0 ; (LHS = 0)
+socEnd1(n2)..  - C(n2,t1) + R(n2,t1) + h(n2,t1) - h0(n2) =E= 0 ; (LHS = 0)
      
-socDynF(n3,t1)..  - C(n3,t1) + R(n3,t1) - h(n3,t1) + h(n3,t2) =E= 0 ; (LHS = 0)
+socEnd1(n3)..  - C(n3,t1) + R(n3,t1) + h(n3,t1) - h0(n3) =E= 0 ; (LHS = 0)
+     
+
+---- socEndF  =E=  
+
+socEndF(n1,t2)..  - C(n1,t2) + R(n1,t2) - h(n1,t1) + h(n1,t2) =E= 0 ; (LHS = 0)
+     
+socEndF(n2,t2)..  - C(n2,t2) + R(n2,t2) - h(n2,t1) + h(n2,t2) =E= 0 ; (LHS = 0)
+     
+socEndF(n3,t2)..  - C(n3,t2) + R(n3,t2) - h(n3,t1) + h(n3,t2) =E= 0 ; (LHS = 0)
+     
+
+---- terminalEnd  =E=  
+
+terminalEnd(n1)..  h(n1,t2) =E= 0 ; (LHS = 0)
+     
+terminalEnd(n2)..  h(n2,t2) =E= 0 ; (LHS = 0)
+     
+terminalEnd(n3)..  h(n3,t2) =E= 0 ; (LHS = 0)
+     
+
+---- disEnergyCap0  =L=  
+
+disEnergyCap0(n1)..  R(n1,t1) - 0.1*E(n1) =L= 0 ; (LHS = 0)
+     
+disEnergyCap0(n2)..  R(n2,t1) - 0.1*E(n2) =L= 0 ; (LHS = 0)
+     
+disEnergyCap0(n3)..  R(n3,t1) - 0.1*E(n3) =L= 0 ; (LHS = 0)
+     
+
+---- disEnergyCapF  =L=  
+
+disEnergyCapF(n1,t2)..  R(n1,t2) - h(n1,t1) =L= 0 ; (LHS = 0)
+     
+disEnergyCapF(n2,t2)..  R(n2,t2) - h(n2,t1) =L= 0 ; (LHS = 0)
+     
+disEnergyCapF(n3,t2)..  R(n3,t2) - h(n3,t1) =L= 0 ; (LHS = 0)
+     
+
+---- chgEnergyCap0  =L=  
+
+chgEnergyCap0(n1)..  C(n1,t1) - E(n1) + h0(n1) =L= 0 ; (LHS = 0)
+     
+chgEnergyCap0(n2)..  C(n2,t1) - E(n2) + h0(n2) =L= 0 ; (LHS = 0)
+     
+chgEnergyCap0(n3)..  C(n3,t1) - E(n3) + h0(n3) =L= 0 ; (LHS = 0)
+     
+
+---- chgEnergyCapF  =L=  
+
+chgEnergyCapF(n1,t2)..  C(n1,t2) + h(n1,t1) - E(n1) =L= 0 ; (LHS = 0)
+     
+chgEnergyCapF(n2,t2)..  C(n2,t2) + h(n2,t1) - E(n2) =L= 0 ; (LHS = 0)
+     
+chgEnergyCapF(n3,t2)..  C(n3,t2) + h(n3,t1) - E(n3) =L= 0 ; (LHS = 0)
      
 
 ---- socBox  =L=  
@@ -405,28 +416,6 @@ socBox(n1,t1)..  h(n1,t1) - E(n1) =L= 0 ; (LHS = 0)
 socBox(n1,t2)..  h(n1,t2) - E(n1) =L= 0 ; (LHS = 0)
      
 socBox(n2,t1)..  h(n2,t1) - E(n2) =L= 0 ; (LHS = 0)
-     
-REMAINING 3 ENTRIES SKIPPED
-
-
----- chgEnergyCap  =L=  
-
-chgEnergyCap(n1,t1)..  C(n1,t1) + h(n1,t1) - E(n1) =L= 0 ; (LHS = 0)
-     
-chgEnergyCap(n1,t2)..  C(n1,t2) + h(n1,t2) - E(n1) =L= 0 ; (LHS = 0)
-     
-chgEnergyCap(n2,t1)..  C(n2,t1) + h(n2,t1) - E(n2) =L= 0 ; (LHS = 0)
-     
-REMAINING 3 ENTRIES SKIPPED
-
-
----- disEnergyCap  =L=  
-
-disEnergyCap(n1,t1)..  R(n1,t1) - h(n1,t1) =L= 0 ; (LHS = 0)
-     
-disEnergyCap(n1,t2)..  R(n1,t2) - h(n1,t2) =L= 0 ; (LHS = 0)
-     
-disEnergyCap(n2,t1)..  R(n2,t1) - h(n2,t1) =L= 0 ; (LHS = 0)
      
 REMAINING 3 ENTRIES SKIPPED
 
@@ -463,15 +452,15 @@ WleqG(n2,t1)..  - g(n2,t1) + W(n2,t1) =L= 0 ; (LHS = 0)
      
 REMAINING 3 ENTRIES SKIPPED
 
-GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 19:14:41 Page 3
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/25/25 14:41:37 Page 3
 SETUP
-Column Listing      SOLVE plan Using MIP From line 197
+Column Listing      SOLVE plan Using MIP From line 178
 
 
 ---- x  line built (1=yes)
 
 x(n1,n2)
-                (.LO, .L, .UP, .M = 0, 0, 1, 0)
+                (.LO, .L, .UP, .M = 0, 0, 0, 0)
   -9.000000E+6  obj
         1       symm(n1,n2)
      -100       capPos(n1,n2,t1)
@@ -480,7 +469,7 @@ x(n1,n2)
      -100       capNeg(n1,n2,t2)
 
 x(n1,n3)
-                (.LO, .L, .UP, .M = 0, 0, 1, 0)
+                (.LO, .L, .UP, .M = 0, 0, 0, 0)
   -1.350000E+7  obj
         1       symm(n1,n3)
      -100       capPos(n1,n3,t1)
@@ -489,7 +478,7 @@ x(n1,n3)
      -100       capNeg(n1,n3,t2)
 
 x(n2,n1)
-                (.LO, .L, .UP, .M = 0, 0, 1, 0)
+                (.LO, .L, .UP, .M = 0, 0, 0, 0)
        -1       symm(n1,n2)
      -100       capPos(n2,n1,t1)
      -100       capPos(n2,n1,t2)
@@ -501,21 +490,21 @@ REMAINING 3 ENTRIES SKIPPED
 ---- f  flow [MW]
 
 f(n1,n2,t1)
-                (.LO, .L, .UP, .M = -INF, 0, +INF, 0)
+                (.LO, .L, .UP, .M = 0, 0, 0, 0)
         1       antisym(n1,n2,t1)
         1       capPos(n1,n2,t1)
        -1       capNeg(n1,n2,t1)
         1       balance(n2,t1)
 
 f(n1,n2,t2)
-                (.LO, .L, .UP, .M = -INF, 0, +INF, 0)
+                (.LO, .L, .UP, .M = 0, 0, 0, 0)
         1       antisym(n1,n2,t2)
         1       capPos(n1,n2,t2)
        -1       capNeg(n1,n2,t2)
         1       balance(n2,t2)
 
 f(n1,n3,t1)
-                (.LO, .L, .UP, .M = -INF, 0, +INF, 0)
+                (.LO, .L, .UP, .M = 0, 0, 0, 0)
         1       antisym(n1,n3,t1)
         1       capPos(n1,n3,t1)
        -1       capNeg(n1,n3,t1)
@@ -595,170 +584,198 @@ REMAINING 3 ENTRIES SKIPPED
 ---- C  charging [MW]
 
 C(n1,t1)
-                (.LO, .L, .UP, .M = 0, 0, 0, 0)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
        -1       balance(n1,t1)
-       -1       socDynF(n1,t1)
-        1       chgEnergyCap(n1,t1)
+       -1       socEnd1(n1)
+        1       chgEnergyCap0(n1)
 
 C(n1,t2)
-                (.LO, .L, .UP, .M = 0, 0, 0, 0)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
        -1       balance(n1,t2)
-        1       chgEnergyCap(n1,t2)
+       -1       socEndF(n1,t2)
+        1       chgEnergyCapF(n1,t2)
 
 C(n2,t1)
-                (.LO, .L, .UP, .M = 0, 0, 0, 0)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
        -1       balance(n2,t1)
-       -1       socDynF(n2,t1)
-        1       chgEnergyCap(n2,t1)
+       -1       socEnd1(n2)
+        1       chgEnergyCap0(n2)
 
 REMAINING 3 ENTRIES SKIPPED
 
 ---- R  discharging [MW]
 
 R(n1,t1)
-                (.LO, .L, .UP, .M = 0, 0, 0, 0)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
         1       balance(n1,t1)
-        1       socDynF(n1,t1)
-        1       disEnergyCap(n1,t1)
+        1       socEnd1(n1)
+        1       disEnergyCap0(n1)
 
 R(n1,t2)
-                (.LO, .L, .UP, .M = 0, 0, 0, 0)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
         1       balance(n1,t2)
-        1       disEnergyCap(n1,t2)
+        1       socEndF(n1,t2)
+        1       disEnergyCapF(n1,t2)
 
 R(n2,t1)
-                (.LO, .L, .UP, .M = 0, 0, 0, 0)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
         1       balance(n2,t1)
-        1       socDynF(n2,t1)
-        1       disEnergyCap(n2,t1)
+        1       socEnd1(n2)
+        1       disEnergyCap0(n2)
 
 REMAINING 3 ENTRIES SKIPPED
 
 ---- h  state of charge [MWh]
 
 h(n1,t1)
-                (.LO, .L, .UP, .M = 0, 0, 0, 0)
-        1       socDyn1(n1)
-       -1       socDynF(n1,t1)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       socEnd1(n1)
+       -1       socEndF(n1,t2)
+       -1       disEnergyCapF(n1,t2)
+        1       chgEnergyCapF(n1,t2)
         1       socBox(n1,t1)
-        1       chgEnergyCap(n1,t1)
-       -1       disEnergyCap(n1,t1)
 
 h(n1,t2)
-                (.LO, .L, .UP, .M = 0, 0, 0, 0)
-        1       socDynF(n1,t1)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       socEndF(n1,t2)
+        1       terminalEnd(n1)
         1       socBox(n1,t2)
-        1       chgEnergyCap(n1,t2)
-       -1       disEnergyCap(n1,t2)
 
 h(n2,t1)
-                (.LO, .L, .UP, .M = 0, 0, 0, 0)
-        1       socDyn1(n2)
-       -1       socDynF(n2,t1)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       socEnd1(n2)
+       -1       socEndF(n2,t2)
+       -1       disEnergyCapF(n2,t2)
+        1       chgEnergyCapF(n2,t2)
         1       socBox(n2,t1)
-        1       chgEnergyCap(n2,t1)
-       -1       disEnergyCap(n2,t1)
 
 REMAINING 3 ENTRIES SKIPPED
 
 ---- E  storage energy [MWh]
 
 E(n1)
-                (.LO, .L, .UP, .M = 0, 0, 0, 0)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
      -120       obj
+       -0.1     def_h0(n1)
+       -0.1     disEnergyCap0(n1)
+       -1       chgEnergyCap0(n1)
+       -1       chgEnergyCapF(n1,t2)
        -1       socBox(n1,t1)
        -1       socBox(n1,t2)
-       -1       chgEnergyCap(n1,t1)
-       -1       chgEnergyCap(n1,t2)
 
 E(n2)
-                (.LO, .L, .UP, .M = 0, 0, 0, 0)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
      -120       obj
+       -0.1     def_h0(n2)
+       -0.1     disEnergyCap0(n2)
+       -1       chgEnergyCap0(n2)
+       -1       chgEnergyCapF(n2,t2)
        -1       socBox(n2,t1)
        -1       socBox(n2,t2)
-       -1       chgEnergyCap(n2,t1)
-       -1       chgEnergyCap(n2,t2)
 
 E(n3)
-                (.LO, .L, .UP, .M = 0, 0, 0, 0)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
      -120       obj
+       -0.1     def_h0(n3)
+       -0.1     disEnergyCap0(n3)
+       -1       chgEnergyCap0(n3)
+       -1       chgEnergyCapF(n3,t2)
        -1       socBox(n3,t1)
        -1       socBox(n3,t2)
-       -1       chgEnergyCap(n3,t1)
-       -1       chgEnergyCap(n3,t2)
 
 
----- OF  
+---- OF  objective function
 
 OF
                 (.LO, .L, .UP, .M = -INF, 0, +INF, 0)
         1       obj
 
-GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 19:14:41 Page 4
+
+---- h0  SOC at start of t1 [MWh]
+
+h0(n1)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       def_h0(n1)
+       -1       socEnd1(n1)
+        1       chgEnergyCap0(n1)
+
+h0(n2)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       def_h0(n2)
+       -1       socEnd1(n2)
+        1       chgEnergyCap0(n2)
+
+h0(n3)
+                (.LO, .L, .UP, .M = 0, 0, +INF, 0)
+        1       def_h0(n3)
+       -1       socEnd1(n3)
+        1       chgEnergyCap0(n3)
+
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/25/25 14:41:37 Page 4
 SETUP
-Range Statistics    SOLVE plan Using MIP From line 197
+Range Statistics    SOLVE plan Using MIP From line 178
 
 
 RANGE STATISTICS (ABSOLUTE NON-ZERO FINITE VALUES)
 
 RHS       [min, max] : [ 1.000E+01, 1.200E+02] - Zero values observed as well
-Bound     [min, max] : [ 1.000E+00, 1.000E+00] - Zero values observed as well
-Matrix    [min, max] : [ 1.000E+00, 1.000E+17]
+Bound     [min, max] : [        NA,        NA] - Zero values observed as well
+Matrix    [min, max] : [ 1.000E-01, 1.000E+17]
 
-GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 19:14:41 Page 5
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/25/25 14:41:37 Page 5
 SETUP
-Model Statistics    SOLVE plan Using MIP From line 197
+Model Statistics    SOLVE plan Using MIP From line 178
 
 
 MODEL STATISTICS
 
-BLOCKS OF EQUATIONS          14     SINGLE EQUATIONS           82
-BLOCKS OF VARIABLES          10     SINGLE VARIABLES           58
-NON ZERO ELEMENTS           214     DISCRETE VARIABLES          6
+BLOCKS OF EQUATIONS          18     SINGLE EQUATIONS           88
+BLOCKS OF VARIABLES          11     SINGLE VARIABLES           61
+NON ZERO ELEMENTS           232     DISCRETE VARIABLES          6
 
 
-GENERATION TIME      =        0.016 SECONDS      4 MB  51.2.0 56392656 WEX-WEI
-GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 19:14:41 Page 6
+GENERATION TIME      =        0.015 SECONDS      4 MB  51.2.0 56392656 WEX-WEI
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/25/25 14:41:37 Page 6
 SETUP
-Solution Report     SOLVE plan Using MIP From line 197
+Solution Report     SOLVE plan Using MIP From line 178
 
 
                S O L V E      S U M M A R Y
 
      MODEL   plan                OBJECTIVE  OF
      TYPE    MIP                 DIRECTION  MINIMIZE
-     SOLVER  CPLEX               FROM LINE  197
+     SOLVER  CPLEX               FROM LINE  178
 
 **** SOLVER STATUS     1 Normal Completion
 **** MODEL STATUS      1 Optimal
-**** OBJECTIVE VALUE         16504700.0000
+**** OBJECTIVE VALUE           166000.0000
 
- RESOURCE USAGE, LIMIT          0.031 10000000000.000
- ITERATION COUNT, LIMIT        22    2147483647
+ RESOURCE USAGE, LIMIT          0.000 10000000000.000
+ ITERATION COUNT, LIMIT         3    2147483647
 *** This solver runs with a demo license. No commercial use.
 --- GMO setup time: 0.00s
---- GMO memory 0.51 Mb (peak 0.51 Mb)
+--- GMO memory 0.51 Mb (peak 0.52 Mb)
 --- Dictionary memory 0.00 Mb
 --- Cplex 22.1.2.0 link memory 0.00 Mb (peak 0.01 Mb)
 --- Starting Cplex
 
 
 --- MIP status (101): integer optimal solution.
---- Cplex Time: 0.03sec (det. 0.44 ticks)
+--- Cplex Time: 0.00sec (det. 2.07 ticks)
 
 --- Returning a primal only solution to GAMS (marginals all set to NA).
 --- Fixing integer variables and solving final LP...
 
 
 --- Fixed MIP status (1): optimal.
---- Cplex Time: 0.00sec (det. 0.07 ticks)
+--- Cplex Time: 0.00sec (det. 0.11 ticks)
 
 
 Proven optimal solution
-MIP Solution:     16504700.000000    (22 iterations, 0 nodes)
-Final Solve:      16504700.000000    (0 iterations)
+MIP Solution:       166000.000000    (3 iterations, 0 nodes)
+Final Solve:        166000.000000    (4 iterations)
 
-Best possible:    16504700.000000
+Best possible:      166000.000000
 Absolute gap:            0.000000
 Relative gap:            0.000000
 
@@ -779,12 +796,12 @@ n2.n3          .              .              .              .
 
                 LOWER          LEVEL          UPPER         MARGINAL
 
-n1.n2.t1          .              .              .           -20.0000      
-n1.n2.t2          .              .              .           -20.0000      
+n1.n2.t1          .              .              .              .          
+n1.n2.t2          .              .              .              .          
 n1.n3.t1          .              .              .              .          
 n1.n3.t2          .              .              .              .          
-n2.n3.t1          .              .              .           -20.0000      
-n2.n3.t2          .              .              .           -20.0000      
+n2.n3.t1          .              .              .              .          
+n2.n3.t2          .              .              .              .          
 
 ---- EQU capPos  
 
@@ -792,33 +809,33 @@ n2.n3.t2          .              .              .           -20.0000
 
 n1.n2.t1        -INF             .              .              .          
 n1.n2.t2        -INF             .              .              .          
-n1.n3.t1        -INF             .              .           -20.0000      
-n1.n3.t2        -INF             .              .           -20.0000      
-n2.n1.t1        -INF         -200.0000          .              .          
-n2.n1.t2        -INF         -200.0000          .              .          
-n2.n3.t1        -INF          -60.0000          .              .          
-n2.n3.t2        -INF          -70.0000          .              .          
-n3.n1.t1        -INF             .              .           -20.0000      
-n3.n1.t2        -INF             .              .           -20.0000      
-n3.n2.t1        -INF         -140.0000          .              .          
-n3.n2.t2        -INF         -130.0000          .              .          
+n1.n3.t1        -INF             .              .              .          
+n1.n3.t2        -INF             .              .              .          
+n2.n1.t1        -INF             .              .              .          
+n2.n1.t2        -INF             .              .              .          
+n2.n3.t1        -INF             .              .              .          
+n2.n3.t2        -INF             .              .              .          
+n3.n1.t1        -INF             .              .              .          
+n3.n1.t2        -INF             .              .              .          
+n3.n2.t1        -INF             .              .              .          
+n3.n2.t2        -INF             .              .              .          
 
 ---- EQU capNeg  
 
                 LOWER          LEVEL          UPPER         MARGINAL
 
-n1.n2.t1        -INF         -200.0000          .              .          
-n1.n2.t2        -INF         -200.0000          .              .          
+n1.n2.t1        -INF             .              .              .          
+n1.n2.t2        -INF             .              .              .          
 n1.n3.t1        -INF             .              .              .          
 n1.n3.t2        -INF             .              .              .          
 n2.n1.t1        -INF             .              .              .          
 n2.n1.t2        -INF             .              .              .          
-n2.n3.t1        -INF         -140.0000          .              .          
-n2.n3.t2        -INF         -130.0000          .              .          
+n2.n3.t1        -INF             .              .              .          
+n2.n3.t2        -INF             .              .              .          
 n3.n1.t1        -INF             .              .              .          
 n3.n1.t2        -INF             .              .              .          
-n3.n2.t1        -INF          -60.0000          .              .          
-n3.n2.t2        -INF          -70.0000          .              .          
+n3.n2.t1        -INF             .              .              .          
+n3.n2.t2        -INF             .              .              .          
 
 ---- EQU balance  
 
@@ -826,12 +843,36 @@ n3.n2.t2        -INF          -70.0000          .              .
 
 n1.t1        20.0000        20.0000        20.0000        20.0000      
 n1.t2        15.0000        15.0000        15.0000        20.0000      
-n2.t1        60.0000        60.0000        60.0000        20.0000      
-n2.t2        70.0000        70.0000        70.0000        20.0000      
-n3.t1        40.0000        40.0000        40.0000        20.0000      
-n3.t2        30.0000        30.0000        30.0000        20.0000      
+n2.t1        60.0000        60.0000        60.0000      1200.0000      
+n2.t2        70.0000        70.0000        70.0000      1200.0000      
+n3.t1        40.0000        40.0000        40.0000      1200.0000      
+n3.t2        30.0000        30.0000        30.0000      1200.0000      
 
----- EQU socDyn1  
+---- EQU def_h0  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+n1          .              .              .           -20.0000      
+n2          .              .              .         -1200.0000      
+n3          .              .              .         -1200.0000      
+
+---- EQU socEnd1  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+n1          .              .              .           -20.0000      
+n2          .              .              .         -1200.0000      
+n3          .              .              .         -1200.0000      
+
+---- EQU socEndF  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t2          .              .              .           -20.0000      
+n2.t2          .              .              .         -1200.0000      
+n3.t2          .              .              .         -1200.0000      
+
+---- EQU terminalEnd  
 
           LOWER          LEVEL          UPPER         MARGINAL
 
@@ -839,57 +880,59 @@ n1          .              .              .              .
 n2          .              .              .              .          
 n3          .              .              .              .          
 
----- EQU socDynF  
+---- EQU disEnergyCap0  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+n1        -INF             .              .              .          
+n2        -INF          -55.0000          .              .          
+n3        -INF          -10.0000          .              .          
+
+---- EQU disEnergyCapF  
 
              LOWER          LEVEL          UPPER         MARGINAL
 
-n1.t1          .              .              .              .          
-n2.t1          .              .              .              .          
-n3.t1          .              .              .              .          
+n1.t2        -INF             .              .              .          
+n2.t2        -INF             .              .              .          
+n3.t2        -INF             .              .              .          
+
+---- EQU chgEnergyCap0  
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+n1        -INF             .              .              .          
+n2        -INF         -945.0000          .              .          
+n3        -INF         -270.0000          .              .          
+
+---- EQU chgEnergyCapF  
+
+             LOWER          LEVEL          UPPER         MARGINAL
+
+n1.t2        -INF             .              .              .          
+n2.t2        -INF         -995.0000          .              .          
+n3.t2        -INF         -290.0000          .              .          
 
 ---- EQU socBox  
 
              LOWER          LEVEL          UPPER         MARGINAL
 
-n1.t1        -INF             .              .              .          
+n1.t1        -INF             .              .             EPS         
 n1.t2        -INF             .              .              .          
-n2.t1        -INF             .              .              .          
-n2.t2        -INF             .              .              .          
-n3.t1        -INF             .              .              .          
-n3.t2        -INF             .              .              .          
-
----- EQU chgEnergyCap  
-
-             LOWER          LEVEL          UPPER         MARGINAL
-
-n1.t1        -INF             .              .              .          
-n1.t2        -INF             .              .              .          
-n2.t1        -INF             .              .              .          
-n2.t2        -INF             .              .              .          
-n3.t1        -INF             .              .              .          
-n3.t2        -INF             .              .              .          
-
----- EQU disEnergyCap  
-
-             LOWER          LEVEL          UPPER         MARGINAL
-
-n1.t1        -INF             .              .              .          
-n1.t2        -INF             .              .              .          
-n2.t1        -INF             .              .              .          
-n2.t2        -INF             .              .              .          
-n3.t1        -INF             .              .              .          
-n3.t2        -INF             .              .              .          
+n2.t1        -INF         -995.0000          .              .          
+n2.t2        -INF        -1050.0000          .              .          
+n3.t1        -INF         -290.0000          .              .          
+n3.t2        -INF         -300.0000          .              .          
 
 ---- EQU gBox  
 
              LOWER          LEVEL          UPPER         MARGINAL
 
-n1.t1        -INF          120.0000       120.0000          .          
-n1.t2        -INF          115.0000       120.0000          .          
-n2.t1        -INF             .            10.0000          .          
-n2.t2        -INF             .            15.0000          .          
-n3.t1        -INF             .            20.0000          .          
-n3.t2        -INF             .            20.0000          .          
+n1.t1        -INF           20.0000       120.0000          .          
+n1.t2        -INF           15.0000       120.0000          .          
+n2.t1        -INF           10.0000        10.0000     -1140.0000      
+n2.t2        -INF           15.0000        15.0000     -1140.0000      
+n3.t1        -INF           20.0000        20.0000     -1155.0000      
+n3.t2        -INF           20.0000        20.0000     -1155.0000      
 
 ---- EQU LBox  
 
@@ -906,51 +949,51 @@ n3.t2        -INF             .            30.0000          .
 
              LOWER          LEVEL          UPPER         MARGINAL
 
-n1.t1        -INF         -120.0000          .              .          
-n1.t2        -INF         -115.0000          .              .          
-n2.t1        -INF             .              .           -40.0000      
-n2.t2        -INF             .              .           -40.0000      
-n3.t1        -INF             .              .           -25.0000      
-n3.t2        -INF             .              .           -25.0000      
+n1.t1        -INF          -20.0000          .              .          
+n1.t2        -INF          -15.0000          .              .          
+n2.t1        -INF          -10.0000          .              .          
+n2.t2        -INF          -15.0000          .              .          
+n3.t1        -INF          -20.0000          .              .          
+n3.t2        -INF          -20.0000          .              .          
 
 ---- VAR x  line built (1=yes)
 
              LOWER          LEVEL          UPPER         MARGINAL
 
-n1.n2          .             1.0000         1.0000   9000000.0000      
-n1.n3          .              .             1.0000   1.3496000E+7      
-n2.n1          .             1.0000         1.0000         EPS         
-n2.n3          .             1.0000         1.0000   7500000.0000      
-n3.n1          .              .             1.0000     -4000.0000      
-n3.n2          .             1.0000         1.0000         EPS         
+n1.n2          .              .              .       9000000.0000      
+n1.n3          .              .              .       1.3500000E+7      
+n2.n1          .              .              .             EPS         
+n2.n3          .              .              .       7500000.0000      
+n3.n1          .              .              .             EPS         
+n3.n2          .              .              .             EPS         
 
 ---- VAR f  flow [MW]
 
                 LOWER          LEVEL          UPPER         MARGINAL
 
-n1.n2.t1        -INF          100.0000        +INF             .          
-n1.n2.t2        -INF          100.0000        +INF             .          
-n1.n3.t1        -INF             .            +INF             .          
-n1.n3.t2        -INF             .            +INF             .          
-n2.n1.t1        -INF         -100.0000        +INF             .          
-n2.n1.t2        -INF         -100.0000        +INF             .          
-n2.n3.t1        -INF           40.0000        +INF             .          
-n2.n3.t2        -INF           30.0000        +INF             .          
-n3.n1.t1        -INF             .            +INF             .          
-n3.n1.t2        -INF             .            +INF             .          
-n3.n2.t1        -INF          -40.0000        +INF             .          
-n3.n2.t2        -INF          -30.0000        +INF             .          
+n1.n2.t1          .              .              .         -1200.0000      
+n1.n2.t2          .              .              .         -1200.0000      
+n1.n3.t1          .              .              .         -1200.0000      
+n1.n3.t2          .              .              .         -1200.0000      
+n2.n1.t1          .              .              .           -20.0000      
+n2.n1.t2          .              .              .           -20.0000      
+n2.n3.t1          .              .              .         -1200.0000      
+n2.n3.t2          .              .              .         -1200.0000      
+n3.n1.t1          .              .              .           -20.0000      
+n3.n1.t2          .              .              .           -20.0000      
+n3.n2.t1          .              .              .         -1200.0000      
+n3.n2.t2          .              .              .         -1200.0000      
 
 ---- VAR g  generation [MW]
 
              LOWER          LEVEL          UPPER         MARGINAL
 
-n1.t1          .           120.0000        +INF             .          
-n1.t2          .           115.0000        +INF             .          
-n2.t1          .              .            +INF             .          
-n2.t2          .              .            +INF             .          
-n3.t1          .              .            +INF             .          
-n3.t2          .              .            +INF             .          
+n1.t1          .            20.0000        +INF             .          
+n1.t2          .            15.0000        +INF             .          
+n2.t1          .            10.0000        +INF             .          
+n2.t2          .            15.0000        +INF             .          
+n3.t1          .            20.0000        +INF             .          
+n3.t2          .            20.0000        +INF             .          
 
 ---- VAR L  load shedding [MW]
 
@@ -969,94 +1012,101 @@ n3.t2          .              .            +INF      1.000000E+17
 
 n1.t1          .              .            +INF       500020.0000      
 n1.t2          .              .            +INF       500020.0000      
-n2.t1          .              .            +INF       500060.0000      
-n2.t2          .              .            +INF       500060.0000      
-n3.t1          .              .            +INF       500045.0000      
-n3.t2          .              .            +INF       500045.0000      
+n2.t1          .              .            +INF       501200.0000      
+n2.t2          .              .            +INF       501200.0000      
+n3.t1          .              .            +INF       501200.0000      
+n3.t2          .              .            +INF       501200.0000      
 
 ---- VAR C  charging [MW]
 
              LOWER          LEVEL          UPPER         MARGINAL
 
-n1.t1          .              .              .            20.0000      
-n1.t2          .              .              .            20.0000      
-n2.t1          .              .              .            20.0000      
-n2.t2          .              .              .            20.0000      
-n3.t1          .              .              .            20.0000      
-n3.t2          .              .              .            20.0000      
+n1.t1          .              .            +INF             .          
+n1.t2          .              .            +INF            EPS         
+n2.t1          .              .            +INF            EPS         
+n2.t2          .              .            +INF            EPS         
+n3.t1          .              .            +INF            EPS         
+n3.t2          .              .            +INF            EPS         
 
 ---- VAR R  discharging [MW]
 
              LOWER          LEVEL          UPPER         MARGINAL
 
-n1.t1          .              .              .           -20.0000      
-n1.t2          .              .              .           -20.0000      
-n2.t1          .              .              .           -20.0000      
-n2.t2          .              .              .           -20.0000      
-n3.t1          .              .              .           -20.0000      
-n3.t2          .              .              .           -20.0000      
+n1.t1          .              .            +INF            EPS         
+n1.t2          .              .            +INF             .          
+n2.t1          .            50.0000        +INF             .          
+n2.t2          .            55.0000        +INF             .          
+n3.t1          .            20.0000        +INF             .          
+n3.t2          .            10.0000        +INF             .          
 
 ---- VAR h  state of charge [MWh]
 
              LOWER          LEVEL          UPPER         MARGINAL
 
-n1.t1          .              .              .             EPS         
-n1.t2          .              .              .             EPS         
-n2.t1          .              .              .             EPS         
-n2.t2          .              .              .             EPS         
-n3.t1          .              .              .             EPS         
-n3.t2          .              .              .             EPS         
+n1.t1          .              .            +INF             .          
+n1.t2          .              .            +INF           20.0000      
+n2.t1          .            55.0000        +INF             .          
+n2.t2          .              .            +INF         1200.0000      
+n3.t1          .            10.0000        +INF             .          
+n3.t2          .              .            +INF         1200.0000      
 
 ---- VAR E  storage energy [MWh]
 
           LOWER          LEVEL          UPPER         MARGINAL
 
-n1          .              .              .           120.0000      
-n2          .              .              .           120.0000      
-n3          .              .              .           120.0000      
+n1          .              .            +INF          118.0000      
+n2          .          1050.0000        +INF             .          
+n3          .           300.0000        +INF             .          
 
                            LOWER          LEVEL          UPPER         MARGINAL
 
----- VAR OF                -INF      1.6504700E+7        +INF             .          
+---- VAR OF                -INF       166000.0000        +INF             .          
+
+  OF  objective function
+
+---- VAR h0  SOC at start of t1 [MWh]
+
+          LOWER          LEVEL          UPPER         MARGINAL
+
+n1          .              .            +INF             .          
+n2          .           105.0000        +INF             .          
+n3          .            30.0000        +INF             .          
 
 
 **** REPORT SUMMARY :        0     NONOPT
                              0 INFEASIBLE
                              0  UNBOUNDED
-GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/24/25 19:14:41 Page 7
+GAMS 51.2.0  56392656 Sep 29, 2025          WEX-WEI x86 64bit/MS Windows - 10/25/25 14:41:37 Page 7
 SETUP
 E x e c u t i o n
 
 
-----    203 ======================= LINE BUILT =======================
+----    183 LINE BUILT ============================================== 
 
-----    207 PARAMETER built_line  1 if line built
-
-            n2          n3
-
-n1       1.000
-n2                   1.000
-
-
-----    209 ======================= STORAGE BUILT =======================
-
-----    213 PARAMETER built_store  1 if storage built
+----    186 PARAMETER built_line  
 
                       ( ALL       0.000 )
 
 
-----    215 ======================= COST BREAKDOWN =======================
+----    188 STORAGE BUILT ============================================== 
 
-----    232 PARAMETER cost_lines           =  1.650000E+7  Line CAPEX
-            PARAMETER cost_store           =        0.000  Storage energy CAPEX
+----    191 PARAMETER built_store  
+
+n2 1050.000,    n3  300.000
+
+
+----    194 COST BREAKDOWN ============================================== 
+
+----    208 PARAMETER cost_lines           =        0.000  Line CAPEX
+            PARAMETER cost_store           =   162000.000  Storage energy CAPEX
             PARAMETER cost_voll            =        0.000  Shed penalty
             PARAMETER cost_curt            =        0.000  Curtailment penalty
-            PARAMETER cost_gen             =     4700.000  Generation operating cost
-            PARAMETER cost_total           =  1.650470E+7  Objective value (OF)
+            PARAMETER cost_gen             =     4000.000  Generation operating cost
+            PARAMETER cost_total           =   166000.000  Objective value (OF)
 
-----    234 =================== OPERATIONS SUMMARY - NODE LEVEL ==================
+----    211 OPERATIONS SUMMARY - NODE LEVEL ===================================== 
 
-----    254 PARAMETER dem  demand [MW]
+----    229 PARAMETER dem  demand [MW]
 
             t1          t2
 
@@ -1065,128 +1115,116 @@ n2      60.000      70.000
 n3      40.000      30.000
 
 
-----    254 PARAMETER gen  generation [MW]
-
-            t1          t2
-
-n1     120.000     115.000
-
-
-----    254 PARAMETER shed  load shedding [MW]
-
-                      ( ALL       0.000 )
-
-
-----    254 PARAMETER curt  generation rejection [MW]
-
-                      ( ALL       0.000 )
-
-
-----    254 PARAMETER charge  charging [MW]
-
-                      ( ALL       0.000 )
-
-
-----    254 PARAMETER discharge  discharging [MW]
-
-                      ( ALL       0.000 )
-
-
-----    254 PARAMETER soc  state of charge [MWh]
-
-                      ( ALL       0.000 )
-
-
-----    256 =================== OPERATIONS SUMMARY - SYSTEM LEVEL ==================
-
-----    274 PARAMETER dem_t  system demand by time [MW]
-
-t1 120.000,    t2 115.000
-
-
-----    274 PARAMETER gen_t  system generation by time [MW]
-
-t1 120.000,    t2 115.000
-
-
-----    274 PARAMETER shed_t  system shed by time [MW]
-
-                      ( ALL       0.000 )
-
-
-----    274 PARAMETER curt_t  system curtailment by time [MW]
-
-                      ( ALL       0.000 )
-
-
-----    274 PARAMETER net_injection  net injection at node (g - d - W + L - C + R) [MW]
-
-            t1          t2
-
-n1     100.000     100.000
-n2     -60.000     -70.000
-n3     -40.000     -30.000
-
-
-----    276 ======================= STORAGE =======================
-
-----    293 PARAMETER h_first  SOC at first period [MWh]
-
-                      ( ALL       0.000 )
-
-
-----    293 PARAMETER h_last  SOC at last period [MWh]
-
-                      ( ALL       0.000 )
-
-
-----    293 PARAMETER R_sum  sum discharge over horizon [MWh]
-
-                      ( ALL       0.000 )
-
-
-----    293 PARAMETER C_sum  sum charge over horizon [MWh]
-
-                      ( ALL       0.000 )
-
-
-----    293 PARAMETER Storage_check  h(t1) + Σ_t C - Σ_t R - h(t_last) (should = 0)
-
-                      ( ALL       0.000 )
-
-
-----    296 ======================= DEMAND SUPPLY DECOMPOSITION =======================
-
-----    307 PARAMETER local_gen_used  g - W - C [MW]  (net local gen used at node)
-
-            t1          t2
-
-n1     120.000     115.000
-
-
-----    307 PARAMETER storage_supply  R [MW]
-
-                      ( ALL       0.000 )
-
-
-----    307 PARAMETER demand_served  d - L [MW]
+----    229 PARAMETER gen  generation [MW]
 
             t1          t2
 
 n1      20.000      15.000
-n2      60.000      70.000
-n3      40.000      30.000
+n2      10.000      15.000
+n3      20.000      20.000
 
 
-----    309 ======================= BALANCE CHECK =======================
+----    229 PARAMETER shed  load shedding [MW]
 
-----    313 PARAMETER balanceResidual  KCL residual (should be 0)
+                      ( ALL       0.000 )
+
+
+----    229 PARAMETER curt  generation rejection [MW]
+
+                      ( ALL       0.000 )
+
+
+----    229 PARAMETER charge  charging [MW]
+
+                      ( ALL       0.000 )
+
+
+----    229 PARAMETER discharge  discharging [MW]
+
+            t1          t2
+
+n2      50.000      55.000
+n3      20.000      10.000
+
+
+----    229 PARAMETER soc  initial SOC[MWh]
+
+n2 105.000,    n3  30.000
+
+
+----    232 OPERATIONS SUMMARY - SYSTEM LEVEL ===================================== 
+
+----    246 PARAMETER dem_t  system demand by time [MW]
+
+t1 120.000,    t2 115.000
+
+
+----    246 PARAMETER gen_t  system generation by time [MW]
+
+t1 50.000,    t2 50.000
+
+
+----    246 PARAMETER shed_t  system shed by time [MW]
+
+                      ( ALL       0.000 )
+
+
+----    246 PARAMETER curt_t  system curtailment by time [MW]
+
+                      ( ALL       0.000 )
+
+
+----    246 PARAMETER inflow  sum flows into i [MW]
+
+                      ( ALL       0.000 )
+
+
+----    246 PARAMETER outflow  sum flows out of i [MW]
+
+                      ( ALL       0.000 )
+
+
+----    249 STORAGE ============================================== 
+
+----    265 PARAMETER h_start  SOC at START of t1 [MWh] = alpha0*E
+
+n2 105.000,    n3  30.000
+
+
+----    265 PARAMETER h_t1_end  SOC at END of t1 [MWh]
+
+n2 55.000,    n3 10.000
+
+
+----    265 PARAMETER h_end  SOC at END of last period [MWh]
+
+                      ( ALL       0.000 )
+
+
+----    265 PARAMETER R_sum  sum discharge over horizon [MWh]
+
+n2 105.000,    n3  30.000
+
+
+----    265 PARAMETER C_sum  sum charge over horizon [MWh]
+
+                      ( ALL       0.000 )
+
+
+----    265 PARAMETER Storage_check  h_start + ΣC - ΣR - h_end (should = 0)
+
+                      ( ALL       0.000 )
+
+
+----    268 BALANCE CHECK ============================================== 
+
+----    272 PARAMETER balanceResidual  
 
                       ( ALL       0.000 )
 
 
 
-EXECUTION TIME       =        0.078 SECONDS      4 MB  51.2.0 56392656 WEX-WEI
+EXECUTION TIME       =        0.062 SECONDS      4 MB  51.2.0 56392656 WEX-WEI
 
 
 USER: GAMS Demo, for EULA and demo limitations see   G250826+0003Cc-GEN

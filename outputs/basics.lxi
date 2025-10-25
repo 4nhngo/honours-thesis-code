@@ -1,92 +1,100 @@
 B 3 C o m p i l a t i o n
-B 322 Equation Listing    SOLVE plan Using MIP From line 197
-D 325 obj
-D 330 symm
-D 339 antisym
-D 350 capPos
-D 361 capNeg
-D 372 balance
-D 383 socDyn1
-D 392 socDynF
-D 401 socBox
-D 412 chgEnergyCap
-D 423 disEnergyCap
-D 434 gBox
-D 445 LBox
-D 456 WleqG
-B 468 Column Listing      SOLVE plan Using MIP From line 197
-E 471 x
-E 501 f
-E 526 g
-E 551 L
-E 573 W
-E 595 C
-E 616 R
-E 637 h
-E 664 E
-E 691 OF
-B 699 Range Statistics    SOLVE plan Using MIP From line 197
-B 710 Model Statistics    SOLVE plan Using MIP From line 197
-B 723 Solution Report     SOLVE plan Using MIP From line 197
-F 768 obj
-F 770 symm
-F 778 antisym
-F 789 capPos
-F 806 capNeg
-F 823 balance
-F 834 socDyn1
-F 842 socDynF
-F 850 socBox
-F 861 chgEnergyCap
-F 872 disEnergyCap
-F 883 gBox
-F 894 LBox
-F 905 WleqG
-G 916 x
-G 927 f
-G 944 g
-G 955 L
-G 966 W
-G 977 C
-G 988 R
-G 999 h
-G 1010 E
-G 1020 OF
-B 1028 E x e c u t i o n
-I 1030 "==========..."
-I 1031 built_line
-I 1040 "==========..."
-I 1042 built_store
-I 1047 "==========..."
-I 1049 cost_lines
-I 1050 cost_store
-I 1051 cost_voll
-I 1052 cost_curt
-I 1053 cost_gen
-I 1054 cost_total
-I 1056 "==========..."
-I 1057 dem
-I 1066 gen
-I 1074 shed
-I 1079 curt
-I 1084 charge
-I 1089 discharge
-I 1094 soc
-I 1099 "==========..."
-I 1100 dem_t
-I 1105 gen_t
-I 1111 shed_t
-I 1116 curt_t
-I 1120 net_injection
-I 1130 "==========..."
-I 1132 h_first
-I 1137 h_last
-I 1142 R_sum
-I 1147 C_sum
-I 1152 Storage_check
-I 1157 "==========..."
-I 1158 local_gen_used
-I 1166 storage_supply
-I 1170 demand_served
-I 1180 "==========..."
-I 1182 balanceResidual
+B 279 Equation Listing    SOLVE plan Using MIP From line 178
+D 282 obj
+D 287 symm
+D 296 antisym
+D 307 capPos
+D 318 capNeg
+D 329 balance
+D 340 def_h0
+D 349 socEnd1
+D 358 socEndF
+D 367 terminalEnd
+D 376 disEnergyCap0
+D 385 disEnergyCapF
+D 394 chgEnergyCap0
+D 403 chgEnergyCapF
+D 412 socBox
+D 423 gBox
+D 434 LBox
+D 445 WleqG
+B 457 Column Listing      SOLVE plan Using MIP From line 178
+E 460 x
+E 490 f
+E 515 g
+E 540 L
+E 562 W
+E 584 C
+E 606 R
+E 628 h
+E 654 E
+E 687 OF
+E 694 h0
+B 716 Range Statistics    SOLVE plan Using MIP From line 178
+B 727 Model Statistics    SOLVE plan Using MIP From line 178
+B 740 Solution Report     SOLVE plan Using MIP From line 178
+F 785 obj
+F 787 symm
+F 795 antisym
+F 806 capPos
+F 823 capNeg
+F 840 balance
+F 851 def_h0
+F 859 socEnd1
+F 867 socEndF
+F 875 terminalEnd
+F 883 disEnergyCap0
+F 891 disEnergyCapF
+F 899 chgEnergyCap0
+F 907 chgEnergyCapF
+F 915 socBox
+F 926 gBox
+F 937 LBox
+F 948 WleqG
+G 959 x
+G 970 f
+G 987 g
+G 998 L
+G 1009 W
+G 1020 C
+G 1031 R
+G 1042 h
+G 1053 E
+G 1063 OF
+G 1067 h0
+B 1081 E x e c u t i o n
+I 1083 "LINE BUILT..."
+I 1085 built_line
+I 1090 "STORAGE BU..."
+I 1091 built_store
+I 1097 "COST BREAK..."
+I 1099 cost_lines
+I 1100 cost_store
+I 1101 cost_voll
+I 1102 cost_curt
+I 1103 cost_gen
+I 1104 cost_total
+I 1106 "OPERATIONS..."
+I 1107 dem
+I 1116 gen
+I 1126 shed
+I 1131 curt
+I 1136 charge
+I 1140 discharge
+I 1148 soc
+I 1154 "OPERATIONS..."
+I 1155 dem_t
+I 1160 gen_t
+I 1166 shed_t
+I 1171 curt_t
+I 1176 inflow
+I 1181 outflow
+I 1186 "STORAGE ==..."
+I 1187 h_start
+I 1192 h_t1_end
+I 1198 h_end
+I 1202 R_sum
+I 1208 C_sum
+I 1213 Storage_check
+I 1218 "BALANCE CH..."
+I 1220 balanceResidual
