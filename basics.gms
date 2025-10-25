@@ -4,7 +4,7 @@ $onText
 • Objective = CAPEX_lines + CAPEX_storage + VOLL + Generation Rejection Penalty + Generation Cost
 • Power balance: g_it - d_it + Σ_j f_jit  - W_it + L_it - C_it + R_it = 0
 • Box constraints for gen, shedding, curtailment (W ≤ g), storage power, SOC
-• Antisymmetric flows and line capacities: -Fmax·x ≤ f ≤ Fmax·x
+• Antisymmetric flows and line capacities: -Fmax*x_ij ≤ f_ij,t ≤ Fmax*x_ij
 $offText
 $onEolCom
 $onInline
