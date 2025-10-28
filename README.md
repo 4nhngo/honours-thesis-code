@@ -5,7 +5,6 @@
 
 ## Structure
 - **`includes/`** — Result display code.
-- **`.gitattributes`** — Default Git configuration file.
 
 ## Notes
 
